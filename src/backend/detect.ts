@@ -15,9 +15,11 @@ export async function detectBackend(canvas: HTMLCanvasElement): Promise<SimBacke
     /* fall through to WebGL2 */
   }
   try {
-    if (WebGL2Backend.isSupported(canvas.getContext('webgl2') as WebGL2RenderingContext | null)) {
-      return new WebGL2Backend(canvas);
-    }
+    // Probe on a throwaway canvas so the display canvas gets the backend's own context attributes.
+    const gl = document.createElement('canvas').getContext('webgl2') as WebGL2RenderingContext | null;
+    const ok = WebGL2Backend.isSupported(gl);
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    if (ok) return new WebGL2Backend(canvas);
   } catch {
     /* unsupported */
   }
