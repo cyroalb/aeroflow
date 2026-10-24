@@ -17,23 +17,31 @@ function runFinite(kind: ObjectKind, L: number, alpha: number, steps: number) {
   const t0 = performance.now();
   for (let n = 0; n < steps; n++) s.step();
   const ms = performance.now() - t0;
-  let bad = 0, maxU = 0, minRho = Infinity, maxRho = -Infinity;
+  let bad = 0, maxU = 0, minRho = Infinity, maxRho = -Infinity, rs = 0, nf = 0;
   for (let k = 0; k < s.f.length; k++) if (!Number.isFinite(s.f[k])) bad++;
   for (let c = 0; c < W * H; c++) {
     if (!Number.isFinite(s.rho[c]) || !Number.isFinite(s.ux[c]) || !Number.isFinite(s.uy[c])) bad++;
     maxU = Math.max(maxU, Math.hypot(s.ux[c], s.uy[c]));
     minRho = Math.min(minRho, s.rho[c]);
     maxRho = Math.max(maxRho, s.rho[c]);
+    if (!g.solid[c]) { rs += s.rho[c]; nf++; }
   }
-  console.log(`stability ${kind} α=${alpha}: ${ms.toFixed(0)} ms, |u|max=${maxU.toFixed(4)}, rho=[${minRho.toFixed(4)}, ${maxRho.toFixed(4)}]`);
-  return bad;
+  const meanRho = rs / nf;
+  console.log(`stability ${kind} α=${alpha}: ${ms.toFixed(0)} ms, |u|max=${maxU.toFixed(4)}, rho=[${minRho.toFixed(4)}, ${maxRho.toFixed(4)}], mean rho=${meanRho.toFixed(5)}`);
+  return { bad, meanRho };
 }
 
 describe('stability at Re ≈ 1.3e7 (tau0 ≈ 0.5000003)', () => {
   it('cylinder 240×96: 3000 steps finite', () => {
-    expect(runFinite('cylinder', 16, 0, 3000)).toBe(0);
+    const r = runFinite('cylinder', 16, 0, 3000);
+    expect(r.bad).toBe(0);
+    expect(r.meanRho).toBeGreaterThanOrEqual(0.9);
+    expect(r.meanRho).toBeLessThanOrEqual(1.1);
   });
   it('NACA 0012 at α = 30°: 3000 steps finite', () => {
-    expect(runFinite('naca0012', 32, 30, 3000)).toBe(0);
+    const r = runFinite('naca0012', 32, 30, 3000);
+    expect(r.bad).toBe(0);
+    expect(r.meanRho).toBeGreaterThanOrEqual(0.9);
+    expect(r.meanRho).toBeLessThanOrEqual(1.1);
   });
 });

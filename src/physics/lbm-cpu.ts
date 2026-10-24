@@ -2,7 +2,7 @@
  * CPU reference D2Q9 Lattice Boltzmann solver — the executable spec of the physics.
  * The WGSL and GLSL ports mirror this algorithm line for line.
  *
- * Step = collide (in place) -> pull-stream into the other buffer -> outlet copy ->
+ * Step = collide (in place) -> pull-stream into the other buffer -> pressure outlet ->
  * swap -> recompute macroscopic fields from the new f.
  *
  * Collision (fluid cells): regularized BGK with Smagorinsky
@@ -17,7 +17,10 @@
  *       if that mirror source is solid, simple bounce-back f*_{OPP i}(x)
  *   - s solid: simple bounce-back f_i = f*_{OPP i}(x)   (Bouzidi: Task 4)
  *   - otherwise f_i = f*_i(s)
- *   - column W−1 (outlet), after streaming: f_i(W−1,y) = f_i(W−2,y) when (W−2,y) is fluid
+ *   - column W−1 (outlet, fixed pressure ρ = 1, non-equilibrium extrapolation), after
+ *       streaming, when (W−2,y) is fluid: with ρ', u' the moments of the post-streaming f
+ *       at (W−2,y):  f_i(W−1,y) = feq_i(1, u') + (f_i(W−2,y) − feq_i(ρ', u'))
+ *       (if (W−2,y) is solid, (W−1,y) keeps its streamed values)
  * Solid cells hold feq(1,0,0) and macroscopic ρ=1, u=0.
  */
 import { C, W as WT, OPP, MIRROR_Y } from './d2q9';
@@ -194,14 +197,19 @@ export class LbmCpu {
       }
     }
     // Note: at x = W−1 with c_ix = −1 the source column W is clamped to W−1; those values
-    // are then overwritten by the outlet rule below (whenever (W−2, y) is fluid).
+    // are then overwritten by the pressure-outlet rule below (whenever (W−2, y) is fluid).
 
-    // ---- 3. outlet: zero-gradient copy from column W−2 ----
+    // ---- 3. outlet: fixed pressure (rho = 1) by non-equilibrium extrapolation from W−2 ----
     for (let y = 0; y < H; y++) {
       const c = y * Wd + Wd - 1;
       const s = c - 1;
       if (solid[c] || solid[s]) continue;
-      for (let i = 0; i < 9; i++) g[i * N + c] = g[i * N + s];
+      const g0 = g[s], g1 = g[N + s], g2 = g[2 * N + s], g3 = g[3 * N + s], g4 = g[4 * N + s];
+      const g5 = g[5 * N + s], g6 = g[6 * N + s], g7 = g[7 * N + s], g8 = g[8 * N + s];
+      const r = g0 + g1 + g2 + g3 + g4 + g5 + g6 + g7 + g8;
+      const vx = (g1 - g3 + g5 - g6 - g7 + g8) / r;
+      const vy = (g2 - g4 + g5 + g6 - g7 - g8) / r;
+      for (let i = 0; i < 9; i++) g[i * N + c] = feq(i, 1, vx, vy) + (g[i * N + s] - feq(i, r, vx, vy));
     }
 
     // ---- 4. swap and recompute macroscopic fields ----

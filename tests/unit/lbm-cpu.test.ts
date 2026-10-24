@@ -48,17 +48,22 @@ describe('LbmCpu', () => {
     expect(s.lastForce).toEqual({ fx: 0, fy: 0 });
   });
 
-  it('total mass changes < 1e-3 relative over 500 steps with an obstacle', () => {
+  it('mass stays bounded with an obstacle: drift < 1e-3 @500, mean rho within 1% of 1 @3000', () => {
     const W = 240, H = 96;
     const g = rasterize(makeShape('cylinder', 16, 0), W, H, 48, 48);
     const s = new LbmCpu(g, 0.56, 0.08);
     s.initUniform(0.08, 0);
+    let nFluid = 0;
+    for (const v of g.solid) if (!v) nFluid++;
     const m0 = totalMass(s, g.solid);
     for (let n = 0; n < 500; n++) s.step();
     const m1 = totalMass(s, g.solid);
-    console.log(`mass drift over 500 steps: ${((m1 - m0) / m0).toExponential(3)}`);
+    for (let n = 500; n < 3000; n++) s.step();
+    const meanRho = totalMass(s, g.solid) / nFluid;
+    console.log(`mass drift @500: ${((m1 - m0) / m0).toExponential(3)}, mean rho @3000: ${meanRho.toFixed(5)}`);
     expect(Math.abs(m1 - m0) / m0).toBeLessThan(1e-3);
-  });
+    expect(Math.abs(meanRho - 1)).toBeLessThan(0.01);
+  }, 60_000);
 
   it('solid cells hold feq(1,0,0) and macroscopic (1,0,0)', () => {
     const W = 80, H = 40;
