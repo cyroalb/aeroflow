@@ -24,7 +24,11 @@ export function reynolds(U: number, L: number): number {
 }
 
 export function toLattice(p: PhysParams, preset: PresetId): LatticeParams {
-  const cfg = PRESETS[preset];
+  return latticeFor(p, PRESETS[preset]);
+}
+
+/** Same mapping as toLattice, for an explicit preset entry (e.g. an injected test grid). */
+export function latticeFor(p: PhysParams, cfg: { Lblunt: number; Lchord: number }): LatticeParams {
   const isAirfoil = p.kind === 'naca0012' || p.kind === 'naca2412';
   const Lcells = isAirfoil ? cfg.Lchord : cfg.Lblunt;
   const re = reynolds(p.U, p.L);

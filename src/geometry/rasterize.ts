@@ -44,7 +44,12 @@ export function rasterize(sdf: Sdf, W: number, H: number, cx: number, cy: number
 }
 
 export function objectCenter(kind: ObjectKind, preset: PresetId): { cx: number; cy: number } {
-  const { W, H } = PRESETS[preset];
+  return centerFor(kind, PRESETS[preset]);
+}
+
+/** Object centre on an explicit grid: (0.2W, 0.5H) blunt, (0.3W, 0.5H) NACA. */
+export function centerFor(kind: ObjectKind, grid: { W: number; H: number }): { cx: number; cy: number } {
+  const { W, H } = grid;
   const naca = kind === 'naca0012' || kind === 'naca2412';
   return { cx: (naca ? 0.3 : 0.2) * W, cy: 0.5 * H };
 }
