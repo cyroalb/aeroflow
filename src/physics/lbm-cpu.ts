@@ -15,12 +15,26 @@
  *   - column 0 (inlet): f_i = feq_i(ρ(1,y) of previous step, uIn)   [all i]
  *   - s.y outside [0,H): free slip, f_i = f*_{MIRROR_Y i}(clamp(x.x − c_ix), x.y);
  *       if that mirror source is solid, simple bounce-back f*_{OPP i}(x)
- *   - s solid: simple bounce-back f_i = f*_{OPP i}(x)   (Bouzidi: Task 4)
+ *   - s solid: halfway bounce-back f_i = f*_{OPP i}(x)  (then replaced by Bouzidi, below)
  *   - otherwise f_i = f*_i(s)
+ *
+ * Bouzidi interpolated bounce-back (opts.bouzidi, default true), applied after streaming
+ * over every wall link (x_f, ī) of geom.links whose fluid cell is not on the inlet column:
+ *   the solid lies along c_ī, q = geom.q[ī·W·H + x_f] ∈ (0,1], i = OPP ī is the incoming
+ *   direction, f* = post-collision values (pre-streaming):
+ *   - q < 0.5:  f_i(x_f) = 2q·f*_ī(x_f) + (1 − 2q)·f*_ī(x_f + c_i)
+ *               if x_f + c_i is solid or outside the grid: f_i(x_f) = f*_ī(x_f)
+ *   - q ≥ 0.5:  f_i(x_f) = f*_ī(x_f)/(2q) + (2q − 1)/(2q)·f*_i(x_f)
+ *   (q = 0.5 reduces exactly to halfway bounce-back.) With bouzidi = false the halfway
+ *   bounce-back values from streaming are kept.
  *   - column W−1 (outlet, fixed pressure ρ = 1, non-equilibrium extrapolation), after
  *       streaming, when (W−2,y) is fluid: with ρ', u' the moments of the post-streaming f
  *       at (W−2,y):  f_i(W−1,y) = feq_i(1, u') + (f_i(W−2,y) − feq_i(ρ', u'))
  *       (if (W−2,y) is solid, (W−1,y) keeps its streamed values)
+ * Momentum-exchange force on the body (lattice units), computed every step after the
+ *   outlet rule, over the same links (inlet-column links excluded), in float64:
+ *   F = Σ_links c_ī·(f*_ī(x_f) + f_i(x_f)),  f_i(x_f) = final post-streaming value.
+ *   Stored in lastForce = { fx, fy }.
  * Solid cells hold feq(1,0,0) and macroscopic ρ=1, u=0.
  */
 import { C, W as WT, OPP, MIRROR_Y } from './d2q9';
@@ -46,6 +60,7 @@ export class LbmCpu {
   tau0: number;
   uInX: number;
   uInY = 0;
+  /** Bouzidi interpolated bounce-back (default); false = halfway bounce-back (test path) */
   readonly bouzidi: boolean;
   /** current distributions (post-streaming), layout f[i*W*H + cell] */
   f: Float32Array;
@@ -62,7 +77,7 @@ export class LbmCpu {
     this.geom = geom;
     this.tau0 = tau0;
     this.uInX = uIn;
-    this.bouzidi = opts?.bouzidi ?? false; // only simple bounce-back exists until Task 4
+    this.bouzidi = opts?.bouzidi ?? true;
     const N = this.W * this.H;
     this.f = new Float32Array(9 * N);
     this.g = new Float32Array(9 * N);
@@ -199,6 +214,29 @@ export class LbmCpu {
     // Note: at x = W−1 with c_ix = −1 the source column W is clamped to W−1; those values
     // are then overwritten by the pressure-outlet rule below (whenever (W−2, y) is fluid).
 
+    // ---- 2b. Bouzidi interpolated bounce-back on wall links (reads f*, writes g) ----
+    const links = this.geom.links, qArr = this.geom.q;
+    const nL = links.length;
+    if (this.bouzidi) {
+      for (let k = 0; k < nL; k += 2) {
+        const c = links[k], ib = links[k + 1]; // fluid cell x_f, direction ī into the solid
+        const x = c % Wd, y = (c - x) / Wd;
+        if (x === 0) continue; // inlet column is overwritten by the inlet rule
+        const i = OPPI[ib];
+        const q = qArr[ib * N + c];
+        const fb = f[ib * N + c]; // f*_ī(x_f)
+        let v: number;
+        if (q < 0.5) {
+          const nx = x + CX[i], ny = y + CY[i]; // x_f + c_i, away from the wall
+          if (nx < 0 || nx >= Wd || ny < 0 || ny >= H || solid[ny * Wd + nx]) v = fb;
+          else v = 2 * q * fb + (1 - 2 * q) * f[ib * N + ny * Wd + nx];
+        } else {
+          v = fb / (2 * q) + ((2 * q - 1) / (2 * q)) * f[i * N + c];
+        }
+        g[i * N + c] = v;
+      }
+    }
+
     // ---- 3. outlet: fixed pressure (rho = 1) by non-equilibrium extrapolation from W−2 ----
     for (let y = 0; y < H; y++) {
       const c = y * Wd + Wd - 1;
@@ -211,6 +249,17 @@ export class LbmCpu {
       const vy = (g2 - g4 + g5 + g6 - g7 - g8) / r;
       for (let i = 0; i < 9; i++) g[i * N + c] = feq(i, 1, vx, vy) + (g[i * N + s] - feq(i, r, vx, vy));
     }
+
+    // ---- 3b. momentum-exchange force on the body: F = Σ c_ī (f*_ī(x_f) + f_i(x_f)) ----
+    let fx = 0, fy = 0;
+    for (let k = 0; k < nL; k += 2) {
+      const c = links[k], ib = links[k + 1];
+      if (c % Wd === 0) continue; // inlet column: populations are imposed, not exchanged
+      const m = f[ib * N + c] + g[OPPI[ib] * N + c];
+      fx += CX[ib] * m;
+      fy += CY[ib] * m;
+    }
+    this.lastForce = { fx, fy };
 
     // ---- 4. swap and recompute macroscopic fields ----
     this.f = g;
