@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "vitest run --exclude tests/physics",
+    "test": "vitest run --project unit",
     "test:physics": "vitest run tests/physics",
     "e2e": "playwright test"
   },
