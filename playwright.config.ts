@@ -18,8 +18,22 @@ export default defineConfig({
   },
   use: {
     baseURL: 'http://localhost:4173',
-    launchOptions: {
-      args: gpuArgs,
-    },
   },
+  projects: [
+    {
+      name: 'gpu',
+      testIgnore: /ui-webgl2\.spec\.ts/,
+      use: { launchOptions: { args: gpuArgs } },
+    },
+    {
+      // WebGPU disabled: the app must fall back to WebGL2
+      name: 'no-webgpu',
+      testMatch: /ui-webgl2\.spec\.ts/,
+      use: {
+        launchOptions: {
+          args: [...gpuArgs.filter((a) => a !== '--enable-unsafe-webgpu'), '--disable-features=WebGPU'],
+        },
+      },
+    },
+  ],
 });
