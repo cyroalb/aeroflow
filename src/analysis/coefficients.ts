@@ -5,7 +5,7 @@ export function toCoeffs(fx: number, fy: number, uLb: number, Lcells: number): {
   return { cd: fx / q, cl: fy / q };
 }
 
-const RETAIN_CONV = 20;
+export const RETAIN_CONV = 40;
 const JITTER_MAX = 0.1;
 const P2P_MIN = 0.02;
 const PERIODS = 3;

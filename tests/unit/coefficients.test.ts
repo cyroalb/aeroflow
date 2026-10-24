@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toCoeffs, CoeffTracker } from '../../src/analysis/coefficients';
+import { toCoeffs, CoeffTracker, RETAIN_CONV } from '../../src/analysis/coefficients';
 
 const CONV = 200;
 
@@ -113,6 +113,26 @@ describe('CoeffTracker', () => {
   it('keeps memory bounded', () => {
     const t = new CoeffTracker(CONV);
     feed(t, 200000, every10, () => 1, () => 0);
-    expect(t.sampleCount()).toBeLessThan((20 * CONV) / 10 + 100);
+    expect(t.sampleCount()).toBeLessThan(Math.ceil((RETAIN_CONV * CONV) / 10) * 1.5 + 70);
+  });
+
+  it('low Strouhal (0.165, period ~6 conv) is stable and steady', () => {
+    const T = CONV / 0.165;
+    const t = new CoeffTracker(CONV);
+    const total = 12000;
+    let seen = false;
+    let s = 0;
+    for (let i = 0; s <= total; i++) {
+      t.push(s, 1.2, 0.3 * Math.sin((2 * Math.PI * s) / T));
+      const st = t.strouhal();
+      if (st !== null) seen = true;
+      if (s >= total - 10 * CONV) {
+        expect(seen).toBe(true);
+        expect(st).not.toBeNull();
+        expect(Math.abs(st! - 0.165)).toBeLessThan(0.165 * 0.02);
+      }
+      s += i % 2 === 0 ? 7 : 23;
+    }
+    expect(t.isSteady()).toBe(true);
   });
 });
