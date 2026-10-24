@@ -1,9 +1,9 @@
 export type PresetId = 'baixa' | 'media' | 'alta';
 
 export const PRESETS: Record<PresetId, { W: number; H: number; Lblunt: number; Lchord: number }> = {
-  baixa: { W: 240, H: 96, Lblunt: 16, Lchord: 32 },
-  media: { W: 400, H: 160, Lblunt: 27, Lchord: 53 },
-  alta: { W: 600, H: 240, Lblunt: 40, Lchord: 80 },
+  baixa: { W: 288, H: 144, Lblunt: 12, Lchord: 24 },
+  media: { W: 432, H: 216, Lblunt: 18, Lchord: 36 },
+  alta: { W: 576, H: 288, Lblunt: 24, Lchord: 48 },
 };
 
 export const NU_AIR = 1.5e-5;

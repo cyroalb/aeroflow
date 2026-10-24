@@ -32,7 +32,9 @@ describe('rasterize', () => {
     expect(Math.abs(g.q[3 * W * H + cell] - 0.5)).toBeLessThan(1e-3);
   });
   it('objectCenter', () => {
-    expect(objectCenter('cylinder', 'baixa')).toEqual({ cx: 48, cy: 48 });
-    expect(objectCenter('naca0012', 'baixa').cx).toBeCloseTo(72);
+    const c = objectCenter('cylinder', 'baixa');
+    expect(c.cx).toBeCloseTo(57.6, 9);
+    expect(c.cy).toBe(72);
+    expect(objectCenter('naca0012', 'baixa').cx).toBeCloseTo(86.4, 9);
   });
 });

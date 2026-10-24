@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { LbmCpu } from '../../src/physics/lbm-cpu';
 import { rasterize, objectCenter } from '../../src/geometry/rasterize';
 import { makeShape } from '../../src/geometry/shapes';
-import { U_LB } from '../../src/config';
+import { U_LB, PRESETS } from '../../src/config';
 import type { ObjectKind } from '../../src/physics/units';
 
-// Re ≈ 1.3e7 on the Baixa preset (100 m/s, 2 m): nu_lb = 0.08·16/1.3e7
-const TAU0 = 0.5 + (3 * 0.08 * 16) / 1.3e7;
+// Re ≈ 1.3e7 on the Baixa preset (100 m/s, 2 m): nu_lb = 0.08·Lblunt/1.3e7
+const TAU0 = 0.5 + (3 * 0.08 * PRESETS.baixa.Lblunt) / 1.3e7;
 
 function runFinite(kind: ObjectKind, L: number, alpha: number, steps: number) {
-  const W = 240, H = 96;
+  const { W, H } = PRESETS.baixa;
   const { cx, cy } = objectCenter(kind, 'baixa');
   const g = rasterize(makeShape(kind, L, alpha), W, H, cx, cy);
   const s = new LbmCpu(g, TAU0, U_LB);
@@ -32,14 +32,14 @@ function runFinite(kind: ObjectKind, L: number, alpha: number, steps: number) {
 }
 
 describe('stability at Re ≈ 1.3e7 (tau0 ≈ 0.5000003)', () => {
-  it('cylinder 240×96: 3000 steps finite', () => {
-    const r = runFinite('cylinder', 16, 0, 3000);
+  it('cylinder on the Baixa grid: 3000 steps finite', () => {
+    const r = runFinite('cylinder', PRESETS.baixa.Lblunt, 0, 3000);
     expect(r.bad).toBe(0);
     expect(r.meanRho).toBeGreaterThanOrEqual(0.9);
     expect(r.meanRho).toBeLessThanOrEqual(1.1);
   });
   it('NACA 0012 at α = 30°: 3000 steps finite', () => {
-    const r = runFinite('naca0012', 32, 30, 3000);
+    const r = runFinite('naca0012', PRESETS.baixa.Lchord, 30, 3000);
     expect(r.bad).toBe(0);
     expect(r.meanRho).toBeGreaterThanOrEqual(0.9);
     expect(r.meanRho).toBeLessThanOrEqual(1.1);

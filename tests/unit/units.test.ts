@@ -9,22 +9,28 @@ describe('units', () => {
   });
   it('cylinder on alta', () => {
     const l = toLattice(cyl, 'alta');
-    expect(l.Lcells).toBe(40);
+    expect(l.Lcells).toBe(24);
     expect(l.uLb).toBe(0.08);
-    expect(l.nuLb).toBeCloseTo((0.08 * 40) / 100, 9);
-    expect(l.tau0).toBeCloseTo(0.596, 6);
+    expect(l.nuLb).toBeCloseTo((0.08 * 24) / 100, 9);
+    expect(l.tau0).toBeCloseTo(0.5576, 6);
     expect(l.showFidelityWarning).toBe(false);
-    expect(l.dtPhys).toBeCloseTo(((0.01 / 40) * 0.08) / 0.15, 12);
+    expect(l.dtPhys).toBeCloseTo(((0.01 / 24) * 0.08) / 0.15, 12);
   });
-  it('cylinder on baixa: Re/16 = 6.25, no warning', () => {
-    const l = toLattice(cyl, 'baixa');
-    expect(l.Lcells).toBe(16);
-    expect(l.re / l.Lcells).toBeCloseTo(6.25, 6);
+  it('cylinder on media: Re/18 ≈ 5.56, no warning', () => {
+    const l = toLattice(cyl, 'media');
+    expect(l.Lcells).toBe(18);
+    expect(l.re / l.Lcells).toBeCloseTo(100 / 18, 6);
     expect(l.showFidelityWarning).toBe(false);
+  });
+  it('cylinder on baixa: Re/12 ≈ 8.33 > 8, warning', () => {
+    const l = toLattice(cyl, 'baixa');
+    expect(l.Lcells).toBe(12);
+    expect(l.re / l.Lcells).toBeCloseTo(100 / 12, 6);
+    expect(l.showFidelityWarning).toBe(true);
   });
   it('naca0012 at 30 m/s, 1 m on alta: Re = 2e6, warning', () => {
     const l = toLattice({ U: 30, L: 1, alphaDeg: 0, kind: 'naca0012' }, 'alta');
-    expect(l.Lcells).toBe(80);
+    expect(l.Lcells).toBe(48);
     expect(l.re).toBeCloseTo(2e6, 0);
     expect(l.showFidelityWarning).toBe(true);
   });

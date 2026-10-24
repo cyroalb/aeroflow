@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { LbmCpu } from '../../src/physics/lbm-cpu';
 import { rasterize, objectCenter, type Geometry } from '../../src/geometry/rasterize';
 import { makeShape } from '../../src/geometry/shapes';
+import { PRESETS } from '../../src/config';
 
-const W = 240, H = 96, U = 0.08, RE = 20;
+const { W, H } = PRESETS.baixa;
+const U = 0.08, RE = 20;
 const tauFor = (Lcells: number) => 0.5 + 3 * ((U * Lcells) / RE);
 
 function runBody(kind: 'cylinder' | 'naca0012', Lcells: number, steps: number): { fx: number; fy: number } {
@@ -63,13 +65,13 @@ describe('Bouzidi boundaries and momentum-exchange force', () => {
     expect(a.lastForce.fx).not.toBe(b.lastForce.fx);
   });
 
-  it('symmetric cylinder, Re = 20 (Lcells 16, 240×96): Fx > 0 and |Fy|/Fx < 0.01 after 6000 steps', () => {
+  it('symmetric cylinder, Re = 20 (Lcells 16, Baixa grid): Fx > 0 and |Fy|/Fx < 0.01 after 6000 steps', () => {
     const F = runBody('cylinder', 16, 6000);
     expect(F.fx).toBeGreaterThan(0);
     expect(Math.abs(F.fy) / F.fx).toBeLessThan(0.01);
   }, 120_000);
 
-  it('NACA 0012 at α = 0, Re = 20 (chord 32, 240×96): Fx > 0 and |Fy| < 0.02·Fx after 6000 steps', () => {
+  it('NACA 0012 at α = 0, Re = 20 (chord 32, Baixa grid): Fx > 0 and |Fy| < 0.02·Fx after 6000 steps', () => {
     const F = runBody('naca0012', 32, 6000);
     expect(F.fx).toBeGreaterThan(0);
     expect(Math.abs(F.fy)).toBeLessThan(0.02 * F.fx);
