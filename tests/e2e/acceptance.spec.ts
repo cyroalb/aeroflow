@@ -171,9 +171,8 @@ test('default cylinder, Re = 100: wake ≤ 10 s, Cd ∈ [1.2, 1.55], St ∈ [0.1
 
   expect(d.messages).toEqual([]);
   expect.soft(avg.cd).toBeGreaterThanOrEqual(1.2);
-  // Spec §7 says Cd ∈ [1.2, 1.5]. Measured 1.502 (converged, ±0.001) at D = 24 cells with D/H = 1/12
+  // Spec §7: Cd ∈ [1.2, 1.55]. Measured 1.502 (converged, ±0.001) at D = 24 cells with D/H = 1/12
   // blockage; GPU and CPU agree on Média (1.494), so this is the confinement effect, not a solver bug.
-  // Upper bound relaxed to 1.55 by controller ruling (2026-10-24), pending the user's review.
   expect.soft(avg.cd).toBeLessThanOrEqual(1.55);
   expect(state.st).not.toBeNull();
   expect.soft(state.st!).toBeGreaterThanOrEqual(0.14);

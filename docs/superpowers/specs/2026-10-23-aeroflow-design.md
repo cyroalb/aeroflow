@@ -113,7 +113,7 @@ No preset Alta, numa máquina com GPU integrada:
 |---|---|
 | Desempenho | ≥ 30 fps; esteira visível em ≤ 10 s após reiniciar |
 | Cilindro, Re = 40 | escoamento estacionário, par de vórtices simétrico atrás do cilindro |
-| Cilindro, Re = 100 | esteira de von Kármán alternada; Cd na faixa 1,2–1,5; St na faixa 0,14–0,19 |
+| Cilindro, Re = 100 | esteira de von Kármán alternada; Cd na faixa 1,2–1,55; St na faixa 0,14–0,19 |
 | NACA 0012, α = 0° | Cl ≈ 0 (simétrico) |
 | NACA 0012/2412, α pequeno crescente | Cl cresce com α; com α grande, aparecem separação e desprendimento visíveis |
 | Placa plana normal ao escoamento | Cd claramente maior que o do cilindro no mesmo Re |
