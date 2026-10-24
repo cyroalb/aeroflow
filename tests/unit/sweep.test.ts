@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { SweepStore } from '../../src/ui/sweepStore';
 
 describe('SweepStore', () => {
-  it('keeps distinct alphas and replaces within the rounding step', () => {
+  it('keeps distinct alphas and replaces within the 0.5° step', () => {
     const a = new SweepStore();
     a.add('naca0012', 4.0, 0.4);
-    a.add('naca0012', 4.2, 0.45);
+    a.add('naca0012', 4.5, 0.45);
     expect(a.points('naca0012')).toHaveLength(2);
     const b = new SweepStore();
     b.add('naca0012', 4.0, 0.4);
-    b.add('naca0012', 4.1, 0.5);
+    b.add('naca0012', 4.2, 0.5);
     expect(b.points('naca0012')).toHaveLength(1);
     expect(b.points('naca0012')[0]![1]).toBe(0.5);
   });

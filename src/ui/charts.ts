@@ -36,6 +36,7 @@ function theme(): Theme {
 }
 
 const FONT = '13px system-ui, "Segoe UI", sans-serif';
+const SMALL = '12px system-ui, "Segoe UI", sans-serif';
 
 function axis(t: Theme, label: string, extra: Partial<uPlot.Axis> = {}): uPlot.Axis {
   return {
@@ -84,23 +85,35 @@ export class TimeChart {
       {
         width: Math.max(el.clientWidth, 200),
         height: Math.max(el.clientHeight, 120),
-        padding: [8, 12, 0, 0],
+        padding: [6, 4, 0, 0],
         cursor: { drag: { x: false, y: false } },
-        scales: { x: { time: false }, y: { range: (_u, mn, mx) => padRange(mn, mx, 0.2) } },
+        scales: {
+          x: { time: false },
+          cd: { range: (_u, mn, mx) => padRange(mn, mx, 0.2) },
+          cl: { range: (_u, mn, mx) => padRange(mn, mx, 0.2) },
+        },
         series: [
           { label: 't (s)', value: (_u, v) => fmt(v, 3) },
-          { label: 'Cd', stroke: th.cd, width: 2, value: (_u, v) => fmt(v, 3) },
-          { label: 'Cl', stroke: th.cl, width: 2, value: (_u, v) => fmt(v, 3) },
+          { label: 'Cd', scale: 'cd', stroke: th.cd, width: 2, points: { show: false }, value: (_u, v) => fmt(v, 3) },
+          { label: 'Cl', scale: 'cl', stroke: th.cl, width: 2, points: { show: false }, value: (_u, v) => fmt(v, 3) },
         ],
-        axes: [axis(th, 't (s)'), axis(th, 'Cd, Cl', { size: 52 })],
-        legend: { show: true },
+        axes: [
+          axis(th, '', {
+            size: 32,
+            labelSize: 0,
+            space: 60,
+            values: (_u, vals) => vals.map((v) => (v == null ? '' : fmt(v, 2) + ' s')),
+          }),
+          axis(th, 'Cd', { scale: 'cd', size: 46, space: 20, labelSize: 16, stroke: th.cd, font: SMALL, labelFont: SMALL, grid: { stroke: th.grid, width: 1 } }),
+          axis(th, 'Cl', { scale: 'cl', side: 1, size: 46, space: 20, labelSize: 16, stroke: th.cl, font: SMALL, labelFont: SMALL, grid: { show: false } }),
+        ],
+        legend: { show: false },
       },
       [this.t, this.cd, this.cl],
       el,
     );
-    const legendH = (p: uPlot) => p.root.querySelector<HTMLElement>('.u-legend')?.offsetHeight ?? 0;
-    fit(el, () => this.u, legendH);
-    this.u.setSize({ width: Math.max(el.clientWidth, 200), height: Math.max(el.clientHeight - legendH(this.u), 80) });
+    fit(el, () => this.u);
+    this.u.setSize({ width: Math.max(el.clientWidth, 200), height: Math.max(el.clientHeight, 80) });
   }
 
   size(): number {
@@ -109,14 +122,17 @@ export class TimeChart {
 
   push(s: SimState): void {
     if (s.step === this.lastStep) return;
-    if (s.step < this.lastStep || (this.t.length > 0 && s.simTimePhys < this.t[this.t.length - 1]!)) this.reset();
+    const samples = s.samples?.length ? s.samples : [{ t: s.simTimePhys, cdInst: s.cdInst, clInst: s.clInst }];
+    if (s.step < this.lastStep || (this.t.length > 0 && samples[0]!.t < this.t[this.t.length - 1]!)) this.reset();
     this.lastStep = s.step;
-    this.t.push(s.simTimePhys);
-    this.cd.push(s.cdInst);
-    this.cl.push(s.clInst);
+    for (const p of samples) {
+      this.t.push(p.t);
+      this.cd.push(p.cdInst);
+      this.cl.push(p.clInst);
+    }
     const span = this.windowSec();
     if (Number.isFinite(span) && span > 0) {
-      const cut = s.simTimePhys - span;
+      const cut = samples[samples.length - 1]!.t - span;
       let n = 0;
       while (n < this.t.length - 1 && this.t[n]! < cut) n++;
       if (n > 0) {

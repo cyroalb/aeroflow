@@ -1,8 +1,8 @@
 import type { ObjectKind } from '../physics/units';
 
-const ALPHA_STEP = 0.25;
+const ALPHA_STEP = 0.5;
 
-/** Rounds the sweep key: α to 0.25° (blunt kinds' Re to 3 significant digits). */
+/** Rounds the sweep key: α to 0.5° (blunt kinds' Re to 3 significant digits). */
 function keyFor(kind: ObjectKind, x: number): number {
   const airfoil = kind === 'naca0012' || kind === 'naca2412';
   return airfoil ? Math.round(x / ALPHA_STEP) * ALPHA_STEP : Number(x.toPrecision(3));

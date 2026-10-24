@@ -11,6 +11,8 @@ export interface SimState {
   simTimePhys: number; slowMotion: number;           // slowMotion = wall s per physical s
   stepsPerFrame: number; fps: number;
   fidelityWarning: boolean; steady: boolean; message: string | null;
+  /** Every force sample taken during the last frame (sub-frame sampling), oldest first. */
+  samples: { t: number; cdInst: number; clInst: number }[];
 }
 
 export type PresetEntry = { W: number; H: number; Lblunt: number; Lchord: number };
@@ -48,6 +50,7 @@ export class SimController {
   private messageUntil = -Infinity;
   private inflight: Promise<unknown> | null = null;
   private listeners: ((s: SimState) => void)[] = [];
+  private samples: { t: number; cdInst: number; clInst: number }[] = [];
   private last: SimState;
 
   constructor(
@@ -189,16 +192,30 @@ export class SimController {
 
   private async doFrame(nowMs: number): Promise<SimState> {
     this.adapt(nowMs);
+    this.samples = [];
     try {
       await this.applyPending();
-      this.backend.step(this.spf);
-      this.stepCount += this.spf;
-      const f = await this.backend.readForce();
-      if (!f.finite) throw new Error('diverged');
-      const c = toCoeffs(f.fx, f.fy, this.lat.uLb, this.lat.Lcells);
-      this.cdInst = c.cd;
-      this.clInst = c.cl;
-      this.tracker.push(this.stepCount, c.cd, c.cl);
+      const chunkMax = Math.max(1, Math.floor(this.lat.Lcells / this.lat.uLb / 4));
+      const reads: { step: number; p: ReturnType<SimBackend['readForce']> }[] = [];
+      let left = this.spf;
+      let at = this.stepCount;
+      while (left > 0) {
+        const n = Math.min(left, chunkMax);
+        this.backend.step(n);
+        left -= n;
+        at += n;
+        reads.push({ step: at, p: this.backend.readForce() }); // not awaited: each call snapshots its own sample
+      }
+      const forces = await Promise.all(reads.map((r) => r.p));
+      if (forces.some((f) => !f.finite)) throw new Error('diverged');
+      this.stepCount = at;
+      forces.forEach((f, i) => {
+        const c = toCoeffs(f.fx, f.fy, this.lat.uLb, this.lat.Lcells);
+        this.cdInst = c.cd;
+        this.clInst = c.cl;
+        this.tracker.push(reads[i]!.step, c.cd, c.cl);
+        this.samples.push({ t: reads[i]!.step * this.lat.dtPhys, cdInst: c.cd, clInst: c.cl });
+      });
     } catch {
       // divergence or backend failure (e.g. device lost): one reset attempt per frame
       this.message = COPY.divergence;
@@ -234,6 +251,7 @@ export class SimController {
       fidelityWarning: lat.showFidelityWarning,
       steady: this.tracker.isSteady(),
       message: this.message,
+      samples: this.samples,
     };
   }
 }

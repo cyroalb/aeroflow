@@ -207,6 +207,20 @@ describe('SimController', () => {
     expect(s.stepsPerFrame).toBe(1);
   });
 
+  it('samples force several times per frame (chunks of <= Lcells/uLb/4 steps) with increasing t', async () => {
+    const { b, c } = make();
+    let s = await c.frame(0);
+    expect(s.samples).toHaveLength(1);
+    let now = 0;
+    for (let k = 0; k < 20; k++) s = await c.frame((now += 16));
+    const chunk = Math.floor(latticeFor(CYL, TABLE.test).Lcells / latticeFor(CYL, TABLE.test).uLb / 4);
+    expect(s.stepsPerFrame).toBeGreaterThan(chunk);
+    expect(s.samples).toHaveLength(Math.ceil(s.stepsPerFrame / chunk));
+    for (let i = 1; i < s.samples.length; i++) expect(s.samples[i]!.t).toBeGreaterThan(s.samples[i - 1]!.t);
+    expect(s.samples[s.samples.length - 1]!.t).toBeCloseTo(s.simTimePhys, 12);
+    expect(Math.max(...b.of('step').map((x) => x.args[0] as number))).toBeLessThanOrEqual(chunk);
+  });
+
   it('a 5000 ms nowMs jump leaves stepsPerFrame and fps unchanged', async () => {
     const { c } = make();
     await c.frame(0);
