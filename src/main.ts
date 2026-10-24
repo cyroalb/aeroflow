@@ -8,13 +8,15 @@ import { fieldScale, type FieldName } from './ui/colormaps';
 import { buildLayout, showUnsupported, type UiRefs } from './ui/layout';
 import { wireControls } from './ui/controls';
 import { updateLegend, updateOverlay } from './ui/overlay';
+import { TimeChart, SweepChart, SweepStore } from './ui/charts';
 
 declare global {
   interface Window {
-    __aeroflow?: { getState(): SimState; controller: SimController; backend: 'webgpu' | 'webgl2' };
+    __aeroflow?: { getState(): SimState; controller: SimController; backend: 'webgpu' | 'webgl2'; timeChart: TimeChart; sweep: SweepStore };
   }
 }
 
+const WINDOW_CONVECTIVE = 20;
 const DEFAULTS = { U: 0.15, L: 0.01, alphaDeg: 0, kind: 'cylinder' } as const;
 
 function presetOverride(): PresetId | null {
@@ -81,7 +83,13 @@ async function main(): Promise<void> {
     },
   });
 
-  window.__aeroflow = { getState: () => state, controller, backend: kind };
+  const timeChart = new TimeChart(ui.chartTime, () => {
+    const p = controller.params;
+    return (WINDOW_CONVECTIVE * p.L) / p.U;
+  });
+  const sweep = new SweepStore();
+  const sweepChart = new SweepChart(ui.chartSweep, sweep);
+  window.__aeroflow = { getState: () => state, controller, backend: kind, timeChart, sweep };
   ui.status.hidden = true;
 
   let logged = false;
@@ -91,6 +99,9 @@ async function main(): Promise<void> {
       const lat = controller.lattice;
       backend.render(field, ui.canvas, fieldScale(field, lat.uLb, lat.Lcells));
       updateOverlay(ui, state);
+      timeChart.push(state);
+      const prm = controller.params;
+      sweepChart.update(prm.kind, state, prm);
     } catch (e) {
       if (!logged) {
         logged = true;

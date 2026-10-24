@@ -528,3 +528,46 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
     animation: none;
   }
 }
+
+/* ---------- uPlot charts ---------- */
+.af-chart .uplot {
+  color: var(--text);
+}
+.af-chart .u-legend {
+  font-size: 13px;
+  text-align: left;
+  padding: 0 8px;
+}
+.af-sweep {
+  display: flex;
+  flex-direction: column;
+}
+.af-sweep-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.af-sweep-title {
+  font-family: var(--mono);
+}
+.af-sweep-clear {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.af-sweep-clear:hover {
+  border-color: var(--accent);
+}
+.af-sweep-plot {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}

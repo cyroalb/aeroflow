@@ -58,6 +58,8 @@ export interface UiRefs {
   simTime: HTMLElement;
   slowmo: HTMLElement;
   engine: HTMLElement;
+  chartTime: HTMLElement;
+  chartSweep: HTMLElement;
 }
 
 const icon = (path: string) =>
@@ -183,6 +185,8 @@ export function buildLayout(app: HTMLElement): UiRefs {
     simTime: $('sim-time'),
     slowmo: $('slowmo'),
     engine: $('engine'),
+    chartTime: $('chart-time'),
+    chartSweep: $('chart-sweep'),
   };
 }
 
