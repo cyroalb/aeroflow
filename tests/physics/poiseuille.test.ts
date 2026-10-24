@@ -4,7 +4,7 @@ import { rasterize } from '../../src/geometry/rasterize';
 import { makeShape } from '../../src/geometry/shapes';
 
 describe('Poiseuille channel', () => {
-  it('develops a parabolic profile (halfway bounce-back walls at y=0.5, 39.5)', () => {
+  it('develops a parabolic profile (Bouzidi walls on cell centres y=1, 39; D=38)', () => {
     const W = 300, H = 41;
     const g = rasterize((_x, y) => Math.min(y - 1, 39 - y), W, H, 0, 0);
     const s = new LbmCpu(g, 0.8, 0.05);
@@ -30,17 +30,21 @@ describe('Poiseuille channel', () => {
       cnt++;
     }
     const mean = sum / cnt;
+    // Bouzidi puts the walls at y = 1 and y = 39 (q = 1e-3): D = 38. The wall rows (u≈0) are
+    // fluid cells, so Σu/38 is the trapezoid estimate of the band-mean velocity ū.
+    const D = 38;
+    const ubar = sum / D;
     let worst = 0;
     for (let y = 0; y < H; y++) {
       const c = y * W + x;
       if (g.solid[c]) continue;
-      const exact = 1 - ((2 * (y - 20)) / 39) ** 2;
+      const exact = 1 - ((2 * (y - 20)) / D) ** 2;
       const err = Math.abs(s.ux[c] / max - exact);
       worst = Math.max(worst, err);
       expect(err).toBeLessThan(0.03);
     }
-    const ratio = max / mean;
-    console.log(`poiseuille: ${ms.toFixed(0)} ms, fluid rows=${cnt}, max=${max.toFixed(5)}, mean=${mean.toFixed(5)}, max/mean=${ratio.toFixed(4)}, worst profile err=${worst.toFixed(4)}`);
+    const ratio = max / ubar;
+    console.log(`poiseuille: ${ms.toFixed(0)} ms, fluid rows=${cnt}, max=${max.toFixed(5)}, mean=${mean.toFixed(5)}, max/ū=${ratio.toFixed(4)}, worst profile err=${worst.toFixed(4)}`);
     expect(cnt).toBe(39);
     expect(Math.abs(ratio - 1.5) / 1.5).toBeLessThan(0.03);
 
@@ -65,7 +69,7 @@ describe('Poiseuille channel', () => {
       if (g.solid[c]) continue;
       worstOut = Math.max(worstOut, Math.abs(s.rho[c] - 1));
     }
-    // pressure gradient: −dρ/dx = 3·dp/dx = 36·ν·ū/D² (D = 39, walls at y = 0.5, 39.5)
+    // pressure gradient: −dρ/dx = 3·dp/dx = 36·ν·ū/D² (D = 38, walls at y = 1, 39)
     const colRho = (xc: number) => {
       let r = 0, k = 0;
       for (let y = 0; y < H; y++) { const c = y * W + xc; if (!g.solid[c]) { r += s.rho[c]; k++; } }
@@ -73,7 +77,7 @@ describe('Poiseuille channel', () => {
     };
     const grad = (colRho(50) - colRho(250)) / 200;
     const nu = (0.8 - 0.5) / 3;
-    const gradTh = (36 * nu * mean) / (39 * 39);
+    const gradTh = (36 * nu * ubar) / (D * D);
     console.log(`poiseuille: outlet |rho−1| max=${worstOut.toExponential(3)}, −drho/dx=${grad.toExponential(4)}, analytic=${gradTh.toExponential(4)}, rel err=${(Math.abs(grad - gradTh) / gradTh).toFixed(4)}`);
     expect(worstOut).toBeLessThan(1e-3);
     expect(Math.abs(grad - gradTh) / gradTh).toBeLessThan(0.05);
