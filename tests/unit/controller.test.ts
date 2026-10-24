@@ -192,7 +192,7 @@ describe('SimController', () => {
     expect(c.params).toEqual({ U: 0.001, L: 0.001, alphaDeg: -20, kind: 'cylinder' });
   });
 
-  it('adaptive steps: +2 below 25 ms, −2 above 34 ms, unchanged in between, clamped', async () => {
+  it('adaptive steps: +2 below 25 ms, −2 above 31 ms, unchanged in between, clamped', async () => {
     const { c } = make();
     let s = await c.frame(0);
     expect(s.stepsPerFrame).toBe(10);
@@ -202,7 +202,9 @@ describe('SimController', () => {
     expect(s.stepsPerFrame).toBe(10);
     s = await c.frame(86); // dt 30 ms
     expect(s.stepsPerFrame).toBe(10);
-    let t = 86;
+    s = await c.frame(118); // dt 32 ms: above the 31 ms slow threshold
+    expect(s.stepsPerFrame).toBe(8);
+    let t = 118;
     for (let k = 0; k < 8; k++) s = await c.frame((t += 100));
     expect(s.stepsPerFrame).toBe(1);
   });
