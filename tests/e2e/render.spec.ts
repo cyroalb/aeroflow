@@ -4,6 +4,10 @@ interface RenderResult {
   backend: string;
   redPct: number;
   bluePct: number;
+  upperRedPct: number;
+  upperBluePct: number;
+  lowerRedPct: number;
+  lowerBluePct: number;
   centreRGB: number[];
   error?: string;
 }
@@ -37,6 +41,9 @@ for (const backend of ['webgpu', 'webgl2'] as const) {
     console.log(`render ${backend}`, JSON.stringify(r));
     expect(r.redPct).toBeGreaterThanOrEqual(5);
     expect(r.bluePct).toBeGreaterThanOrEqual(5);
+    // orientation (y up): negative vorticity (blue) above the axis, positive (red) below
+    expect(r.upperBluePct).toBeGreaterThan(2 * r.upperRedPct);
+    expect(r.lowerRedPct).toBeGreaterThan(2 * r.lowerBluePct);
     const [R, G, B] = r.centreRGB;
     expect(Math.abs(R - 0x9a)).toBeLessThanOrEqual(6);
     expect(Math.abs(G - 0xa4)).toBeLessThanOrEqual(6);

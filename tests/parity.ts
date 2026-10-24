@@ -61,6 +61,10 @@ interface RenderResult {
   backend: string;
   redPct: number;
   bluePct: number;
+  upperRedPct: number;
+  upperBluePct: number;
+  lowerRedPct: number;
+  lowerBluePct: number;
   centreRGB: number[];
   error?: string;
 }
@@ -99,13 +103,25 @@ async function runRender(kind: string): Promise<void> {
     const x0 = Math.floor(cx + lat.Lcells), x1 = Math.floor(cx + 10 * lat.Lcells);
     const y0 = Math.floor(cy - 2 * lat.Lcells), y1 = Math.floor(cy + 2 * lat.Lcells);
     let n = 0, red = 0, blue = 0;
+    // orientation: counts above (y > cy, upper image half) and below the axis
+    let nUp = 0, nLo = 0, upRed = 0, upBlue = 0, loRed = 0, loBlue = 0;
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x < x1; x++) {
         const o = 4 * ((H - 1 - y) * W + x);
         const r = px[o], g = px[o + 1], b = px[o + 2];
         n++;
-        if (r > b + 40 && r > g + 20) red++;
-        if (b > r + 40 && b > g + 20) blue++;
+        const isRed = r > b + 40 && r > g + 20, isBlue = b > r + 40 && b > g + 20;
+        if (isRed) red++;
+        if (isBlue) blue++;
+        if (y > cy) {
+          nUp++;
+          if (isRed) upRed++;
+          if (isBlue) upBlue++;
+        } else if (y < cy) {
+          nLo++;
+          if (isRed) loRed++;
+          if (isBlue) loBlue++;
+        }
       }
     }
     const co = 4 * ((H - 1 - Math.round(cy)) * W + Math.round(cx));
@@ -113,10 +129,14 @@ async function runRender(kind: string): Promise<void> {
       backend: kind,
       redPct: (100 * red) / n,
       bluePct: (100 * blue) / n,
+      upperRedPct: (100 * upRed) / nUp,
+      upperBluePct: (100 * upBlue) / nUp,
+      lowerRedPct: (100 * loRed) / nLo,
+      lowerBluePct: (100 * loBlue) / nLo,
       centreRGB: [px[co], px[co + 1], px[co + 2]],
     };
   } catch (e) {
-    window.renderResult = { backend: kind, redPct: 0, bluePct: 0, centreRGB: [], error: String(e) };
+    window.renderResult = { backend: kind, redPct: 0, bluePct: 0, upperRedPct: 0, upperBluePct: 0, lowerRedPct: 0, lowerBluePct: 0, centreRGB: [], error: String(e) };
   }
   out.textContent = JSON.stringify(window.renderResult);
 }

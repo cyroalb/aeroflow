@@ -43,6 +43,10 @@ export class WebGpuBackend implements SimBackend {
   private rCtx: GPUCanvasContext | null = null;
   private rCanvas: HTMLCanvasElement | null = null;
   private rFormat: GPUTextureFormat | null = null;
+  private rBindGroups = new Map<FieldName, GPUBindGroup>(); // invalidated with the sim bind group
+  private readonly rParamsData = new ArrayBuffer(32);
+  private readonly rParamsU32 = new Uint32Array(this.rParamsData);
+  private readonly rParamsF32 = new Float32Array(this.rParamsData);
 
   /** Requests the adapter/device and compiles the pipelines (called by init if needed). */
   private async ensureDevice(): Promise<GPUDevice> {
@@ -97,6 +101,7 @@ export class WebGpuBackend implements SimBackend {
   }
 
   private freeBuffers(): void {
+    this.rBindGroups.clear();
     if (!this.buf) return;
     for (const b of Object.values(this.buf)) b.destroy();
     this.buf = null;
@@ -104,6 +109,7 @@ export class WebGpuBackend implements SimBackend {
   }
 
   private rebind(): void {
+    this.rBindGroups.clear();
     const b = this.buf!;
     const order = [b.params, b.f, b.fs, b.mac, b.forceOut, b.solid, b.q, b.links, b.changed];
     this.bindGroup = this.dev.createBindGroup({
@@ -327,21 +333,24 @@ export class WebGpuBackend implements SimBackend {
       d.queue.writeBuffer(cm, 0, data);
       this.rCmaps.set(field, cm);
     }
-    const pd = new ArrayBuffer(32);
-    const u = new Uint32Array(pd), fl = new Float32Array(pd);
+    const pd = this.rParamsData, u = this.rParamsU32, fl = this.rParamsF32;
     u[0] = g.W;
     u[1] = g.H;
     u[2] = field === 'vorticity' ? 0 : field === 'speed' ? 1 : 2;
     fl[4] = range[0];
     fl[5] = range[1];
     d.queue.writeBuffer(this.rParams!, 0, pd);
-    const bg = d.createBindGroup({
-      layout: this.rLayout!,
-      entries: [this.rParams!, this.buf!.mac, this.buf!.solid, cm].map((buffer, binding) => ({
-        binding,
-        resource: { buffer },
-      })),
-    });
+    let bg = this.rBindGroups.get(field);
+    if (!bg) {
+      bg = d.createBindGroup({
+        layout: this.rLayout!,
+        entries: [this.rParams!, this.buf!.mac, this.buf!.solid, cm].map((buffer, binding) => ({
+          binding,
+          resource: { buffer },
+        })),
+      });
+      this.rBindGroups.set(field, bg);
+    }
     const enc = d.createCommandEncoder();
     const pass = enc.beginRenderPass({
       colorAttachments: [
@@ -364,6 +373,7 @@ export class WebGpuBackend implements SimBackend {
     this.freeBuffers();
     for (const b of this.rCmaps.values()) b.destroy();
     this.rCmaps.clear();
+    this.rBindGroups.clear();
     this.rParams?.destroy();
     this.rParams = null;
     this.rPipeline = null;
