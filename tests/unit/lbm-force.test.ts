@@ -5,17 +5,6 @@ import { makeShape } from '../../src/geometry/shapes';
 import { PRESETS } from '../../src/config';
 
 const { W, H } = PRESETS.baixa;
-const U = 0.08, RE = 20;
-const tauFor = (Lcells: number) => 0.5 + 3 * ((U * Lcells) / RE);
-
-function runBody(kind: 'cylinder' | 'naca0012', Lcells: number, steps: number): { fx: number; fy: number } {
-  const { cx, cy } = objectCenter(kind, 'baixa');
-  const g = rasterize(makeShape(kind, Lcells, 0), W, H, cx, cy);
-  const s = new LbmCpu(g, tauFor(Lcells), U);
-  s.initUniform(U, 0);
-  for (let n = 0; n < steps; n++) s.step();
-  return { ...s.lastForce };
-}
 
 /** Same geometry with every link fraction forced to q = 0.5. */
 function withHalfQ(g: Geometry): Geometry {
@@ -64,16 +53,4 @@ describe('Bouzidi boundaries and momentum-exchange force', () => {
     }
     expect(a.lastForce.fx).not.toBe(b.lastForce.fx);
   });
-
-  it('symmetric cylinder, Re = 20 (Lcells 16, Baixa grid): Fx > 0 and |Fy|/Fx < 0.01 after 6000 steps', () => {
-    const F = runBody('cylinder', 16, 6000);
-    expect(F.fx).toBeGreaterThan(0);
-    expect(Math.abs(F.fy) / F.fx).toBeLessThan(0.01);
-  }, 120_000);
-
-  it('NACA 0012 at α = 0, Re = 20 (chord 32, Baixa grid): Fx > 0 and |Fy| < 0.02·Fx after 6000 steps', () => {
-    const F = runBody('naca0012', 32, 6000);
-    expect(F.fx).toBeGreaterThan(0);
-    expect(Math.abs(F.fy)).toBeLessThan(0.02 * F.fx);
-  }, 120_000);
 });

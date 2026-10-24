@@ -12,10 +12,8 @@ interface RenderResult {
   error?: string;
 }
 
-const OUT = 'D:/Dropbox/codes/aeroflow/.superpowers/sdd/2026-10-23-aeroflow-v1';
-
 for (const backend of ['webgpu', 'webgl2'] as const) {
-  test(`${backend}: vorticity render of the Re=100 cylinder has red/blue wake and grey body`, async ({ page }) => {
+  test(`${backend}: vorticity render of the Re=100 cylinder has red/blue wake and grey body`, async ({ page }, testInfo) => {
     test.setTimeout(120_000);
     if (backend === 'webgpu') {
       await page.goto('/tests/parity.html?backend=webgpu&render=1');
@@ -37,7 +35,7 @@ for (const backend of ['webgpu', 'webgl2'] as const) {
     });
     const r = await page.evaluate(() => (window as unknown as { renderResult: RenderResult }).renderResult);
     expect(r.error).toBeUndefined();
-    await page.locator('#field').screenshot({ path: `${OUT}/render-${backend}.png` });
+    await page.locator('#field').screenshot({ path: testInfo.outputPath(`render-${backend}.png`) });
     console.log(`render ${backend}`, JSON.stringify(r));
     expect(r.redPct).toBeGreaterThanOrEqual(5);
     expect(r.bluePct).toBeGreaterThanOrEqual(5);
