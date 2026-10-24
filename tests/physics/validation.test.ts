@@ -24,6 +24,44 @@ interface CaseResult {
   cy: number;
   Lcells: number;
   ms: number;
+  /** every sample fed to the tracker: step, Cd, Cl */
+  samples: { n: number[]; cd: number[]; cl: number[] };
+}
+
+/**
+ * Long-time Cd: trapezoidal (step-weighted) mean of the samples over the last `periods` full
+ * shedding periods, period boundaries = interpolated upward zero crossings of Cl − mean(Cl)
+ * (mean over the second half of the run). Returns null if there are too few crossings.
+ */
+function multiPeriodCd(smp: CaseResult['samples'], periods: number): { cd: number; nPer: number } | null {
+  const { n, cd, cl } = smp;
+  const h = n.length >> 1;
+  let m = 0;
+  for (let k = h; k < n.length; k++) m += cl[k];
+  m /= n.length - h;
+  const cross: number[] = [];
+  for (let k = h + 1; k < n.length; k++) {
+    const a = cl[k - 1] - m, b = cl[k] - m;
+    if (a < 0 && b >= 0) cross.push(n[k - 1] + (-a / (b - a)) * (n[k] - n[k - 1]));
+  }
+  if (cross.length < periods + 1) return null;
+  const t0 = cross[cross.length - 1 - periods], t1 = cross[cross.length - 1];
+  const at = (t: number) => {
+    let k = 1;
+    while (n[k] < t) k++;
+    const f = (t - n[k - 1]) / (n[k] - n[k - 1]);
+    return cd[k - 1] + f * (cd[k] - cd[k - 1]);
+  };
+  let area = 0, px = t0, py = at(t0);
+  for (let k = 0; k < n.length; k++) {
+    if (n[k] <= t0) continue;
+    if (n[k] >= t1) break;
+    area += 0.5 * (py + cd[k]) * (n[k] - px);
+    px = n[k];
+    py = cd[k];
+  }
+  area += 0.5 * (py + at(t1)) * (t1 - px);
+  return { cd: area / (t1 - t0), nPer: periods };
 }
 
 function runCase(
@@ -42,15 +80,19 @@ function runCase(
   s.initUniform(lat.uLb, 0);
   s.addKick(cx + 0.5 * Lc, cy, cx + 2.5 * Lc, cy + Lc, 0.1 * lat.uLb);
   const tracker = new CoeffTracker(Lc / lat.uLb);
+  const samples = { n: [] as number[], cd: [] as number[], cl: [] as number[] };
   const t0 = performance.now();
   for (let n = 1; n <= steps; n++) {
     s.step();
     if (n % SAMPLE_EVERY === 0) {
       const { cd, cl } = toCoeffs(s.lastForce.fx, s.lastForce.fy, lat.uLb, Lc);
       tracker.push(n, cd, cl);
+      samples.n.push(n);
+      samples.cd.push(cd);
+      samples.cl.push(cl);
     }
   }
-  return { s, tracker, cx, cy, Lcells: Lc, ms: performance.now() - t0 };
+  return { s, tracker, cx, cy, Lcells: Lc, ms: performance.now() - t0, samples };
 }
 
 let cyl100: CaseResult | null = null;
@@ -76,16 +118,15 @@ describe('CPU solver physics validation (spec §7)', () => {
   }, 10 * MIN);
 
   // Média grid (D = 18): blockage 1/12 keeps confinement from inflating Cd/St (at 1/6 the
-  // solver gave Cd ≈ 1.76, St ≈ 0.198 — see task-6-report.md).
-  // SKIPPED pending a controller ruling: the converged Cd is 1.494 (mean over 40k steps), but the
-  // single-period tracker.mean() scatters 1.478–1.508 from period to period and reads 1.5003
-  // at step 40000. St = 0.177 is inside the bounds. See task-6-report.md.
-  it.skip('cylinder Re=100 (Média): von Kármán shedding, Cd in [1.2, 1.5], St in [0.14, 0.19]', () => {
+  // solver gave Cd ≈ 1.76, St ≈ 0.198 — see task-6-report.md). Cd is asserted on a long-time
+  // mean over the last 10 shedding periods: single-period means scatter ±0.015 around it.
+  it('cylinder Re=100 (Média): von Kármán shedding, Cd in [1.2, 1.5], St in [0.14, 0.19]', () => {
     const r = cylinderRe100();
-    const m = r.tracker.mean();
     const st = r.tracker.strouhal();
-    expect(m.cd).toBeGreaterThanOrEqual(1.2);
-    expect(m.cd).toBeLessThanOrEqual(1.5);
+    const lt = multiPeriodCd(r.samples, 10);
+    expect(lt).not.toBeNull();
+    expect(lt!.cd).toBeGreaterThanOrEqual(1.2);
+    expect(lt!.cd).toBeLessThanOrEqual(1.5);
     expect(st).not.toBeNull();
     expect(st!).toBeGreaterThanOrEqual(0.14);
     expect(st!).toBeLessThanOrEqual(0.19);
@@ -136,8 +177,10 @@ describe('CPU solver physics validation (spec §7)', () => {
 
   it('flat plate normal to the flow, Re=100 (Baixa): mean Cd > cylinder Cd at Re=100 (Média, same 1/12 blockage)', () => {
     const plate = runCase('plate', 100, 0, 40000);
-    const cdPlate = plate.tracker.mean().cd;
-    const cdCyl = cylinderRe100().tracker.mean().cd;
-    expect(cdPlate).toBeGreaterThan(cdCyl);
+    const cdPlate = multiPeriodCd(plate.samples, 10);
+    const cdCyl = multiPeriodCd(cylinderRe100().samples, 10);
+    expect(cdPlate).not.toBeNull();
+    expect(cdCyl).not.toBeNull();
+    expect(cdPlate!.cd).toBeGreaterThan(cdCyl!.cd);
   }, 40 * MIN);
 });

@@ -22,10 +22,15 @@ describe('units', () => {
     expect(l.re / l.Lcells).toBeCloseTo(100 / 18, 6);
     expect(l.showFidelityWarning).toBe(false);
   });
-  it('cylinder on baixa: Re/12 ≈ 8.33 > 8, warning', () => {
+  it('default cylinder on baixa: Re/12 ≈ 8.33 ≤ 10, no warning', () => {
     const l = toLattice(cyl, 'baixa');
     expect(l.Lcells).toBe(12);
     expect(l.re / l.Lcells).toBeCloseTo(100 / 12, 6);
+    expect(l.showFidelityWarning).toBe(false);
+  });
+  it('cylinder at 0.2 m/s on baixa: Re/12 ≈ 11.1 > 10, warning', () => {
+    const l = toLattice({ ...cyl, U: 0.2 }, 'baixa');
+    expect(l.re / l.Lcells).toBeCloseTo(0.2 * 0.01 / 1.5e-5 / 12, 6);
     expect(l.showFidelityWarning).toBe(true);
   });
   it('naca0012 at 30 m/s, 1 m on alta: Re = 2e6, warning', () => {

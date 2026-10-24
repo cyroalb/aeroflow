@@ -9,7 +9,7 @@ export const PRESETS: Record<PresetId, { W: number; H: number; Lblunt: number; L
 export const NU_AIR = 1.5e-5;
 export const U_LB = 0.08;
 export const CS_SMAG = 0.1;
-export const FIDELITY_RE_CELL = 8;
+export const FIDELITY_RE_CELL = 10;
 
 export const COPY = {
   fidelityWarning: '⚠ Re alto: modelo de turbulência, valores aproximados',
