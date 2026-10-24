@@ -58,6 +58,13 @@ export class WebGpuBackend implements SimBackend {
     device.addEventListener('uncapturederror', (e) => {
       console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message);
     });
+    // device loss (driver reset, GPU process crash, destroy()): drop every object tied to this
+    // device so the next init() requests a new one and rebuilds pipelines, buffers and render state
+    let lost = false;
+    void device.lost.then(() => {
+      lost = true;
+      if (this.device === device) this.dropDevice();
+    });
     const module = device.createShaderModule({ code: shaderSrc });
     const info = await module.getCompilationInfo();
     const errors = info.messages.filter((m) => m.type === 'error');
@@ -86,9 +93,26 @@ export class WebGpuBackend implements SimBackend {
     const pipes = {} as Record<Entry, GPUComputePipeline>;
     for (const e of ENTRY_POINTS)
       pipes[e] = await device.createComputePipelineAsync({ layout: pl, compute: { module, entryPoint: e } });
+    if (lost) throw new Error('WebGPU: device lost during initialisation');
     this.pipelines = pipes;
     this.device = device;
     return device;
+  }
+
+  /** Forgets the (lost) device and everything created from it; buffers die with the device. */
+  private dropDevice(): void {
+    this.device = null;
+    this.pipelines = null;
+    this.layout = null;
+    this.buf = null;
+    this.bindGroup = null;
+    this.rPipeline = null;
+    this.rLayout = null;
+    this.rParams = null;
+    this.rCmaps.clear();
+    this.rBindGroups.clear();
+    this.rCtx = null;
+    this.rCanvas = null;
   }
 
   private get dev(): GPUDevice {

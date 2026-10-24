@@ -19,4 +19,7 @@ export const COPY = {
   unsupported:
     'Seu navegador não suporta WebGPU nem WebGL2 com texturas float. Use uma versão recente do Chrome, Edge ou Firefox.',
   altaDisabledTooltip: 'Disponível apenas com WebGPU',
+  qualityHint: 'Afeta a precisão de Cd, Cl e St, não só a imagem.',
+  backendFailure:
+    'Não foi possível iniciar a simulação na GPU deste navegador. Tente recarregar a página ou usar uma versão recente do Chrome, Edge ou Firefox.',
 } as const;

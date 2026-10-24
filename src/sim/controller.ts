@@ -11,6 +11,8 @@ export interface SimState {
   simTimePhys: number; slowMotion: number;           // slowMotion = wall s per physical s
   stepsPerFrame: number; fps: number;
   fidelityWarning: boolean; steady: boolean; message: string | null;
+  /** The backend could not be (re)initialised: the controller has stopped; the UI must report it. */
+  backendFailed: boolean;
   /** Every force sample taken during the last frame (sub-frame sampling), oldest first. */
   samples: { t: number; cdInst: number; clInst: number }[];
 }
@@ -26,6 +28,7 @@ const SLOW_MS = 31; // below 33.3 ms so a 60 Hz cadence settles above 30 fps, no
 const IGNORE_DT_MS = 250;
 const FPS_SMOOTH = 0.1; // EMA weight of the newest frame
 const MESSAGE_MS = 4000;
+const MAX_INIT_FAILURES = 3; // consecutive failed inits before giving up (1 if no init ever succeeded)
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -40,6 +43,11 @@ export class SimController {
   private tracker: CoeffTracker;
   private pending = { reset: true, angle: false, tau: false };
   private stepCount = 0;
+  private simTime = 0; // physical s since the last full reset (Σ steps·dtPhys, so U changes don't jump)
+  private initOk = false; // an init has succeeded at least once
+  private initFailures = 0; // consecutive failed inits
+  private initAttempts = 0;
+  private failed = false;
   private spf = STEPS_START;
   private lastNow: number | null = null;
   private fpsEma = 0;
@@ -125,7 +133,8 @@ export class SimController {
   }
 
   frame(nowMs: number): Promise<SimState> {
-    if (this.inflight) return Promise.resolve(this.last);
+    // once failed (possibly inside setPreset), one more frame publishes backendFailed; then it is inert
+    if (this.inflight || this.last.backendFailed) return Promise.resolve(this.last);
     const run = this.doFrame(nowMs);
     this.inflight = run;
     return run.finally(() => {
@@ -149,13 +158,23 @@ export class SimController {
     try {
       if (pend.reset) {
         const geom = this.geometry();
-        await this.backend.init(geom, this.lat.tau0, this.lat.uLb);
+        this.initAttempts++;
+        try {
+          await this.backend.init(geom, this.lat.tau0, this.lat.uLb);
+        } catch (e) {
+          this.initFailures++;
+          if (!this.initOk || this.initFailures >= MAX_INIT_FAILURES) this.fail();
+          throw e;
+        }
+        this.initOk = true;
+        this.initFailures = 0;
         const { cx, cy } = centerFor(this.p.kind, this.grid);
         const L = this.lat.Lcells;
         const u = this.lat.uLb;
         this.backend.initUniform(u, 0);
         this.backend.addKick(cx + 0.5 * L, cy, cx + 2.5 * L, cy + L, 0.1 * u);
         this.stepCount = 0;
+        this.simTime = 0;
       } else {
         if (pend.angle) this.backend.setGeometry(this.geometry());
         if (pend.tau) this.backend.setTau0(this.lat.tau0);
@@ -169,6 +188,13 @@ export class SimController {
     this.tracker = new CoeffTracker(this.lat.Lcells / this.lat.uLb);
     this.cdInst = 0;
     this.clInst = 0;
+  }
+
+  /** Gives up: no further resets or steps; the state reports backendFailed with COPY.backendFailure. */
+  private fail(): void {
+    this.failed = true;
+    this.message = COPY.backendFailure;
+    this.messageUntil = Infinity;
   }
 
   private adapt(nowMs: number): void {
@@ -193,10 +219,12 @@ export class SimController {
   private async doFrame(nowMs: number): Promise<SimState> {
     this.adapt(nowMs);
     this.samples = [];
+    const attempts = this.initAttempts;
+    const reads: { step: number; p: ReturnType<SimBackend['readForce']> }[] = [];
     try {
+      if (this.failed) throw new Error('backend failed');
       await this.applyPending();
       const chunkMax = Math.max(1, Math.floor(this.lat.Lcells / this.lat.uLb / 4));
-      const reads: { step: number; p: ReturnType<SimBackend['readForce']> }[] = [];
       let left = this.spf;
       let at = this.stepCount;
       while (left > 0) {
@@ -208,23 +236,32 @@ export class SimController {
       }
       const forces = await Promise.all(reads.map((r) => r.p));
       if (forces.some((f) => !f.finite)) throw new Error('diverged');
+      const dt = this.lat.dtPhys;
+      const t0 = this.simTime - this.stepCount * dt;
       this.stepCount = at;
+      this.simTime = t0 + at * dt;
       forces.forEach((f, i) => {
         const c = toCoeffs(f.fx, f.fy, this.lat.uLb, this.lat.Lcells);
         this.cdInst = c.cd;
         this.clInst = c.cl;
         this.tracker.push(reads[i]!.step, c.cd, c.cl);
-        this.samples.push({ t: reads[i]!.step * this.lat.dtPhys, cdInst: c.cd, clInst: c.cl });
+        this.samples.push({ t: t0 + reads[i]!.step * dt, cdInst: c.cd, clInst: c.cl });
       });
     } catch {
-      // divergence or backend failure (e.g. device lost): one reset attempt per frame
-      this.message = COPY.divergence;
-      this.messageUntil = nowMs + MESSAGE_MS;
-      this.pending = { reset: true, angle: false, tau: false };
-      try {
-        await this.applyPending();
-      } catch {
-        // pending.reset is kept; the next frame tries again
+      // divergence or backend failure (e.g. device lost): settle every issued readback first,
+      // then at most one init per frame (none if this frame's init already failed)
+      await Promise.allSettled(reads.map((r) => r.p));
+      if (!this.failed) {
+        this.message = COPY.divergence;
+        this.messageUntil = nowMs + MESSAGE_MS;
+        this.pending = { reset: true, angle: false, tau: false };
+        if (this.initAttempts === attempts) {
+          try {
+            await this.applyPending();
+          } catch {
+            // pending.reset is kept; the next frame tries again (or the controller has given up)
+          }
+        }
       }
     }
     if (this.message !== null && nowMs >= this.messageUntil) this.message = null;
@@ -244,13 +281,14 @@ export class SimController {
       cdInst: this.cdInst,
       clInst: this.clInst,
       step: this.stepCount,
-      simTimePhys: this.stepCount * lat.dtPhys,
+      simTimePhys: this.simTime,
       slowMotion: this.frameSec / (this.spf * lat.dtPhys),
       stepsPerFrame: this.spf,
       fps: this.fpsEma,
       fidelityWarning: lat.showFidelityWarning,
       steady: this.tracker.isSteady(),
       message: this.message,
+      backendFailed: this.failed,
       samples: this.samples,
     };
   }

@@ -14,6 +14,11 @@ export async function detectBackend(canvas: HTMLCanvasElement): Promise<SimBacke
   } catch {
     /* fall through to WebGL2 */
   }
+  return detectWebGL2(canvas);
+}
+
+/** WebGL2 with float render targets on `canvas`, or null. Never throws. */
+export function detectWebGL2(canvas: HTMLCanvasElement): SimBackend | null {
   try {
     // Probe on a throwaway canvas so the display canvas gets the backend's own context attributes.
     const gl = document.createElement('canvas').getContext('webgl2') as WebGL2RenderingContext | null;

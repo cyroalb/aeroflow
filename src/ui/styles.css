@@ -110,6 +110,13 @@ body {
 .af-status[hidden] {
   display: none;
 }
+.af-status-error {
+  padding: 16px;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.45;
+  animation: none;
+}
 @keyframes af-pulse {
   50% {
     opacity: 0.45;
@@ -223,6 +230,12 @@ body {
   display: grid;
   grid-template-columns: 1fr;
   gap: 18px;
+}
+.af-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 /* object chips */

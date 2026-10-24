@@ -3,6 +3,7 @@ import { test, expect, type Page } from '@playwright/test';
 const WARNING = '⚠ Re alto: modelo de turbulência, valores aproximados';
 const NOTE_2D =
   'Esta simulação é 2D. Acima de Re ≈ 190, o escoamento real ao redor de um cilindro é tridimensional; os valores aqui não capturam esses efeitos.';
+const QUALITY_HINT = 'Afeta a precisão de Cd, Cl e St, não só a imagem.';
 const UNSUPPORTED =
   'Seu navegador não suporta WebGPU nem WebGL2 com texturas float. Use uma versão recente do Chrome, Edge ou Firefox.';
 
@@ -64,6 +65,14 @@ test('1920 px: canvas keeps the grid aspect ratio', async ({ page }) => {
   expect(r.cw).toBe(r.W);
   expect(r.ch).toBe(r.H);
   expect(Math.abs(r.w / r.h - r.W / r.H) / (r.W / r.H)).toBeLessThan(0.01);
+});
+
+test('quality hint: precision of Cd, Cl and St, visible and as the select title', async ({ page }) => {
+  await page.goto('/?preset=baixa');
+  await ready(page);
+  await expect(page.locator('#quality-hint')).toBeVisible();
+  await expect(page.locator('#quality-hint')).toHaveText(QUALITY_HINT);
+  await expect(page.locator('#quality')).toHaveAttribute('title', QUALITY_HINT);
 });
 
 test('ⓘ toggles the 2D note', async ({ page }) => {

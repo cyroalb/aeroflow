@@ -1,11 +1,11 @@
 import './ui/styles.css';
 import { PRESETS, type PresetId } from './config';
-import { detectBackend } from './backend/detect';
+import { detectBackend, detectWebGL2 } from './backend/detect';
 import { measureLups, choosePreset } from './backend/benchmark';
 import type { SimBackend } from './backend/types';
 import { SimController, type SimState } from './sim/controller';
 import { fieldScale, type FieldName } from './ui/colormaps';
-import { buildLayout, showUnsupported, type UiRefs } from './ui/layout';
+import { buildLayout, showBackendFailure, showUnsupported, type UiRefs } from './ui/layout';
 import { wireControls } from './ui/controls';
 import { updateLegend, updateOverlay } from './ui/overlay';
 import { TimeChart, SweepChart, SweepStore } from './ui/charts';
@@ -47,23 +47,51 @@ async function choose(backend: SimBackend, ui: UiRefs): Promise<{ preset: Preset
   return { preset, auto: preset };
 }
 
+interface Started {
+  backend: SimBackend;
+  controller: SimController;
+  state: SimState;
+  auto: PresetId | null;
+}
+
+/** Chooses the preset and runs the first frame (initial reset); null if the backend cannot initialise. */
+async function start(backend: SimBackend, ui: UiRefs): Promise<Started | null> {
+  ui.engine.textContent = backend.kind === 'webgpu' ? 'WebGPU' : 'WebGL2';
+  const { preset, auto } = await choose(backend, ui);
+  const controller = new SimController(backend, preset, { ...DEFAULTS });
+  const state = await controller.frame(performance.now()); // applies the initial reset
+  if (state.backendFailed) {
+    backend.destroy();
+    return null;
+  }
+  return { backend, controller, state, auto };
+}
+
 async function main(): Promise<void> {
   const app = document.getElementById('app');
   if (!app) return;
   const ui = buildLayout(app);
   ui.status.textContent = 'Iniciando…';
 
-  const backend = await detectBackend(ui.canvas);
-  if (!backend || backend.kind === 'cpu') {
+  const detected = await detectBackend(ui.canvas);
+  if (!detected || detected.kind === 'cpu') {
     showUnsupported(app);
     return;
   }
-  const kind = backend.kind;
-  ui.engine.textContent = kind === 'webgpu' ? 'WebGPU' : 'WebGL2';
-
-  const { preset, auto } = await choose(backend, ui);
-  const controller = new SimController(backend, preset, { ...DEFAULTS });
-  let state = await controller.frame(performance.now()); // applies the initial reset
+  let started = await start(detected, ui);
+  if (!started && detected.kind === 'webgpu') {
+    // WebGPU was detected but cannot run the simulation: fall back to WebGL2
+    // (the display canvas has no context yet: WebGPU only configures it on the first render)
+    const gl = detectWebGL2(ui.canvas);
+    if (gl) started = await start(gl, ui);
+  }
+  if (!started) {
+    showBackendFailure(app);
+    return;
+  }
+  const { backend, controller, auto } = started;
+  const kind = backend.kind as 'webgpu' | 'webgl2';
+  let state = started.state;
   controller.onState((s) => {
     state = s;
   });
@@ -96,6 +124,12 @@ async function main(): Promise<void> {
   const tick = async (now: number) => {
     try {
       await controller.frame(now);
+      if (state.backendFailed) {
+        // the controller gave up after repeated failed resets: stop the loop and say so
+        ui.toast.hidden = true;
+        showBackendFailure(app);
+        return;
+      }
       const lat = controller.lattice;
       backend.render(field, ui.canvas, fieldScale(field, lat.uLb, lat.Lcells));
       updateOverlay(ui, state);
@@ -107,12 +141,15 @@ async function main(): Promise<void> {
         logged = true;
         console.error(e);
       }
-    } finally {
-      requestAnimationFrame(tick);
     }
+    requestAnimationFrame(tick);
   };
   updateOverlay(ui, state);
   requestAnimationFrame(tick);
 }
 
-void main();
+main().catch((e) => {
+  console.error(e);
+  const app = document.getElementById('app');
+  if (app) showBackendFailure(app);
+});

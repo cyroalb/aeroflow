@@ -19,6 +19,10 @@ class SpyBackend implements SimBackend {
   calls: Call[] = [];
   nonFinite = 0; // number of upcoming readForce calls that report finite:false
   rejectForce = 0; // number of upcoming readForce calls that reject
+  lateRejectForce = 0; // number of upcoming readForce calls that reject after a macrotask
+  failInit = 0; // number of upcoming init calls that reject
+  stepThrowAfter = -1; // ≥ 0: that many more step calls succeed, then one throws
+  outstanding = 0; // readForce promises not yet settled
 
   private log(name: string, ...args: unknown[]) {
     this.calls.push({ name, args });
@@ -35,6 +39,10 @@ class SpyBackend implements SimBackend {
 
   async init(geom: Geometry, tau0: number, uIn: number) {
     this.log('init', geom, tau0, uIn);
+    if (this.failInit > 0) {
+      this.failInit--;
+      throw new Error('init failed');
+    }
     return this.inner.init(geom, tau0, uIn);
   }
   setGeometry(geom: Geometry) {
@@ -59,20 +67,35 @@ class SpyBackend implements SimBackend {
   }
   step(n: number) {
     this.log('step', n);
+    if (this.stepThrowAfter === 0) {
+      this.stepThrowAfter = -1;
+      throw new Error('device lost');
+    }
+    if (this.stepThrowAfter > 0) this.stepThrowAfter--;
     this.inner.step(n);
   }
   async readForce() {
     this.log('readForce');
-    if (this.rejectForce > 0) {
-      this.rejectForce--;
-      throw new Error('device lost');
+    this.outstanding++;
+    try {
+      if (this.rejectForce > 0) {
+        this.rejectForce--;
+        throw new Error('device lost');
+      }
+      if (this.lateRejectForce > 0) {
+        this.lateRejectForce--;
+        await new Promise((r) => setTimeout(r, 5));
+        throw new Error('device lost');
+      }
+      const f = await this.inner.readForce();
+      if (this.nonFinite > 0) {
+        this.nonFinite--;
+        return { fx: NaN, fy: f.fy, finite: false };
+      }
+      return f;
+    } finally {
+      this.outstanding--;
     }
-    const f = await this.inner.readForce();
-    if (this.nonFinite > 0) {
-      this.nonFinite--;
-      return { fx: NaN, fy: f.fy, finite: false };
-    }
-    return f;
   }
   readMacro() {
     return this.inner.readMacro();
@@ -293,6 +316,133 @@ describe('SimController', () => {
     expect(b.count('init')).toBe(1);
     await c.frame(32);
     expect(b.count('init')).toBe(2);
+  });
+
+  it('simTimePhys and sample t keep running across a velocity change (dtPhys changes, no jump)', async () => {
+    const { c } = make();
+    let now = 0;
+    let s = await c.frame(now);
+    for (let k = 0; k < 5; k++) s = await c.frame((now += 16));
+    const t0 = s.simTimePhys;
+    expect(t0).toBeCloseTo(s.step * c.lattice.dtPhys, 12);
+    c.setParams({ U: 0.3 });
+    s = await c.frame((now += 16));
+    const dt = c.lattice.dtPhys;
+    expect(s.samples[0]!.t).toBeGreaterThan(t0);
+    expect(s.simTimePhys).toBeCloseTo(t0 + s.stepsPerFrame * dt, 12);
+    expect(s.samples[s.samples.length - 1]!.t).toBeCloseTo(s.simTimePhys, 12);
+    let prev = s.simTimePhys;
+    c.setParams({ U: 0.05 });
+    for (let k = 0; k < 3; k++) {
+      s = await c.frame((now += 16));
+      expect(s.samples[0]!.t).toBeGreaterThan(prev);
+      expect(s.simTimePhys - prev).toBeCloseTo(s.stepsPerFrame * c.lattice.dtPhys, 12);
+      prev = s.simTimePhys;
+    }
+    c.setParams({ kind: 'square' }); // full reset: time restarts
+    s = await c.frame((now += 16));
+    expect(s.simTimePhys).toBeCloseTo(s.stepsPerFrame * c.lattice.dtPhys, 12);
+  });
+
+  it('a failing init is not retried twice in the same frame', async () => {
+    const { b, c } = make();
+    await c.frame(0);
+    b.clear();
+    c.setParams({ kind: 'square' });
+    b.failInit = 1;
+    let s = await c.frame(16);
+    expect(b.count('init')).toBe(1);
+    expect(s.backendFailed).toBe(false);
+    s = await c.frame(32); // retried next frame, succeeds
+    expect(b.count('init')).toBe(2);
+    expect(s.backendFailed).toBe(false);
+    expect(s.step).toBe(b.of('step').reduce((a, x) => a + (x.args[0] as number), 0));
+  });
+
+  it('first init failure → backendFailed + COPY.backendFailure, and the loop stops', async () => {
+    const b = new SpyBackend();
+    b.failInit = 1;
+    const c = new SimController(b, 'test', CYL, TABLE);
+    let s = await c.frame(0);
+    expect(b.count('init')).toBe(1);
+    expect(s.backendFailed).toBe(true);
+    expect(s.message).toBe(COPY.backendFailure);
+    s = await c.frame(16);
+    s = await c.frame(10_000);
+    expect(b.count('init')).toBe(1);
+    expect(b.count('step')).toBe(0);
+    expect(s.message).toBe(COPY.backendFailure);
+  });
+
+  it('persistent init failure (3 consecutive) stops the reset loop and reports it', async () => {
+    const { b, c } = make();
+    await c.frame(0);
+    b.clear();
+    b.failInit = 1000;
+    b.rejectForce = 1; // device lost → reset → init keeps failing
+    let s = await c.frame(16);
+    expect(s.backendFailed).toBe(false);
+    s = await c.frame(32);
+    expect(s.backendFailed).toBe(false);
+    s = await c.frame(48);
+    expect(b.count('init')).toBe(3);
+    expect(s.backendFailed).toBe(true);
+    expect(s.message).toBe(COPY.backendFailure);
+    for (let k = 4; k < 10; k++) s = await c.frame(16 * k + 10_000);
+    expect(b.count('init')).toBe(3);
+    expect(s.message).toBe(COPY.backendFailure);
+  });
+
+  it('init failure inside setPreset after 3 consecutive failures is reported by the next frame', async () => {
+    const table = { ...TABLE, big: { W: 80, H: 32, Lblunt: 6, Lchord: 10 } };
+    const b = new SpyBackend();
+    const c = new SimController(b, 'test', CYL, table);
+    await c.frame(0);
+    b.failInit = 1000;
+    b.rejectForce = 1;
+    await c.frame(16); // failure 1
+    await c.frame(32); // failure 2
+    await c.setPreset('big'); // failure 3 → gives up
+    b.clear();
+    const s = await c.frame(48);
+    expect(s.backendFailed).toBe(true);
+    expect(s.message).toBe(COPY.backendFailure);
+    expect(b.count('init')).toBe(0);
+    expect(b.count('step')).toBe(0);
+  });
+
+  it('intermittent init failures (2, then success) reset the consecutive count', async () => {
+    const { b, c } = make();
+    await c.frame(0);
+    b.clear();
+    b.failInit = 2;
+    b.rejectForce = 1;
+    let s = await c.frame(16);
+    s = await c.frame(32);
+    s = await c.frame(48);
+    expect(b.count('init')).toBe(3);
+    expect(s.backendFailed).toBe(false);
+    b.failInit = 2;
+    b.rejectForce = 1;
+    for (let k = 4; k <= 7; k++) s = await c.frame(16 * k);
+    expect(s.backendFailed).toBe(false);
+  });
+
+  it('failure path awaits readForce promises already issued (no unhandled rejection)', async () => {
+    const { b, c } = make();
+    let now = 0;
+    let s = await c.frame(now);
+    for (let k = 0; k < 20; k++) s = await c.frame((now += 16));
+    const chunk = Math.floor(c.lattice.Lcells / c.lattice.uLb / 4);
+    expect(s.stepsPerFrame).toBeGreaterThan(chunk); // ≥ 2 chunks per frame
+    b.clear();
+    b.lateRejectForce = 1; // first chunk's read rejects later…
+    b.stepThrowAfter = 1; // …and the second chunk's step throws
+    s = await c.frame((now += 16));
+    expect(b.count('readForce')).toBe(1);
+    expect(b.outstanding).toBe(0);
+    expect(b.count('init')).toBe(1);
+    expect(s.message).toBe(COPY.divergence);
   });
 
   it('fidelityWarning matches toLattice(...).showFidelityWarning', async () => {

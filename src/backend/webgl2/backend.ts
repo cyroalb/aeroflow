@@ -8,6 +8,8 @@ import { CS_SMAG } from '../../config';
 import type { Geometry, SimBackend } from '../types';
 
 const SMAG_K = 18 * Math.SQRT2 * CS_SMAG * CS_SMAG;
+/** How long init() waits for a lost context to be restored before failing. */
+const RESTORE_TIMEOUT_MS = 5000;
 
 /** Texture units, fixed per sampler name across all programs. */
 const UNITS = {
@@ -67,6 +69,23 @@ export class WebGL2Backend implements SimBackend {
   private tau0 = 0.6;
   private uInX = 0;
   private uInY = 0;
+  private lost = false; // between webglcontextlost and webglcontextrestored
+  private restored: (() => void)[] = []; // init() calls waiting for the context to come back
+
+  private readonly onLost = (e: Event): void => {
+    e.preventDefault(); // allows the browser to restore the context
+    this.lost = true;
+    // every GL object died with the context; rebuilt by the next init() after restoration
+    this.progs = null;
+    this.vao = null;
+    this.res = null;
+    this.cmaps.clear();
+  };
+
+  private readonly onRestored = (): void => {
+    this.lost = false;
+    for (const r of this.restored.splice(0)) r();
+  };
 
   constructor(private readonly canvas?: HTMLCanvasElement | OffscreenCanvas) {}
 
@@ -77,11 +96,15 @@ export class WebGL2Backend implements SimBackend {
   // ---------- context, shaders ----------
 
   private ensureContext(): WebGL2RenderingContext {
-    if (this.gl && !this.gl.isContextLost()) return this.gl;
-    this.gl = null;
+    if (this.gl) {
+      if (this.lost || this.gl.isContextLost()) throw new Error('WebGL2: context lost');
+      if (this.progs) return this.gl;
+      return this.setup(this.gl); // restored after a loss: same context object, new GL objects
+    }
     this.progs = null;
     this.res = null;
     this.cmaps.clear();
+    this.lost = false;
     const canvas = this.canvas ?? document.createElement('canvas');
     this.glCanvas = canvas;
     const gl = canvas.getContext('webgl2', {
@@ -93,10 +116,34 @@ export class WebGL2Backend implements SimBackend {
       preserveDrawingBuffer: false,
     }) as WebGL2RenderingContext | null;
     if (!gl) throw new Error('WebGL2 unavailable: getContext("webgl2") returned null');
+    if (gl.isContextLost()) throw new Error('WebGL2: context lost');
+    canvas.addEventListener('webglcontextlost', this.onLost);
+    canvas.addEventListener('webglcontextrestored', this.onRestored);
+    this.gl = gl;
+    return this.setup(gl);
+  }
+
+  /** Waits (bounded) for a lost context to be restored; resolves at once if it is not lost. */
+  private waitRestored(): Promise<void> {
+    if (!this.lost) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this.restored = this.restored.filter((r) => r !== done);
+        reject(new Error('WebGL2: context lost'));
+      }, RESTORE_TIMEOUT_MS);
+      this.restored.push(done);
+    });
+  }
+
+  /** Checks float render targets (re-enabling the extension) and compiles the programs. */
+  private setup(gl: WebGL2RenderingContext): WebGL2RenderingContext {
     if (!WebGL2Backend.isSupported(gl)) throw new Error('WebGL2: EXT_color_buffer_float unavailable');
     const vs = vertSrc;
     const lbm = (pass: number) => `#define PASS ${pass}\n${lbmSrc}`;
-    this.gl = gl;
     this.progs = {
       collide: this.link(vs, lbm(1)),
       stream: this.link(vs, lbm(2)),
@@ -252,6 +299,7 @@ export class WebGL2Backend implements SimBackend {
   }
 
   async init(geom: Geometry, tau0: number, uIn: number): Promise<void> {
+    await this.waitRestored();
     const gl = this.ensureContext();
     this.freeResources();
     const { W, H } = geom;
@@ -295,8 +343,9 @@ export class WebGL2Backend implements SimBackend {
     return !!this.gl && !!this.res && !this.gl.isContextLost();
   }
 
+  /** Throws only if init() never ran; a lost context is handled by each method via `ready`. */
   private require(): void {
-    if (!this.res || !this.geom) throw new Error('WebGL2Backend: init() not called');
+    if (!this.geom) throw new Error('WebGL2Backend: init() not called');
   }
 
   // ---------- passes ----------
@@ -510,6 +559,9 @@ export class WebGL2Backend implements SimBackend {
 
   destroy(): void {
     const gl = this.gl;
+    this.glCanvas?.removeEventListener('webglcontextlost', this.onLost);
+    this.glCanvas?.removeEventListener('webglcontextrestored', this.onRestored);
+    this.lost = false;
     this.freeResources();
     if (gl && !gl.isContextLost() && this.progs) {
       for (const p of Object.values(this.progs)) gl.deleteProgram(p.prog);

@@ -131,7 +131,8 @@ export function buildLayout(app: HTMLElement): UiRefs {
         </div>
         <div class="af-group">
           <label class="af-label" for="quality">Qualidade</label>
-          <select id="quality">${QUALITIES.map((q) => `<option value="${q.id}">${q.label}</option>`).join('')}</select>
+          <select id="quality" title="${COPY.qualityHint}" aria-describedby="quality-hint">${QUALITIES.map((q) => `<option value="${q.id}">${q.label}</option>`).join('')}</select>
+          <p id="quality-hint" class="af-hint">${COPY.qualityHint}</p>
         </div>
       </div>
 
@@ -193,4 +194,17 @@ export function buildLayout(app: HTMLElement): UiRefs {
 /** Replaces the whole app with the full-width unsupported-browser message. */
 export function showUnsupported(app: HTMLElement): void {
   app.innerHTML = `<div class="af-unsupported-wrap"><p id="unsupported" class="af-unsupported" role="alert">${COPY.unsupported}</p></div>`;
+}
+
+/** Replaces the status text ("Iniciando…") with the backend-failure message; whole app if there is no status. */
+export function showBackendFailure(app: HTMLElement): void {
+  const status = app.querySelector<HTMLElement>('#status');
+  if (!status) {
+    app.innerHTML = `<div class="af-unsupported-wrap"><p id="backend-failure" class="af-unsupported" role="alert">${COPY.backendFailure}</p></div>`;
+    return;
+  }
+  status.textContent = COPY.backendFailure;
+  status.classList.add('af-status-error');
+  status.setAttribute('role', 'alert');
+  status.hidden = false;
 }

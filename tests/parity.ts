@@ -141,10 +141,82 @@ async function runRender(kind: string): Promise<void> {
   out.textContent = JSON.stringify(window.renderResult);
 }
 
+interface RecoverResult {
+  backend: string;
+  lostForceFinite?: boolean; // webgl2: readForce while the context is lost
+  lostInitError?: string; // webgl2: init() while lost and never restored (bounded wait)
+  maxAbsDiffU: number;
+  forceRelDiff: number;
+  error?: string;
+}
+
+declare global {
+  interface Window {
+    recoverResult?: RecoverResult;
+  }
+}
+
+const once = (t: EventTarget, type: string) => new Promise<void>((r) => t.addEventListener(type, () => r(), { once: true }));
+
+/**
+ * &recover=1: runs the parity case, loses the GPU (WebGPU: device.destroy(); WebGL2:
+ * WEBGL_lose_context), then runs it again on the same backend object and compares with the CPU.
+ */
+async function runRecover(kind: string): Promise<void> {
+  const out = document.getElementById('out')!;
+  const res: RecoverResult = { backend: kind, maxAbsDiffU: Infinity, forceRelDiff: Infinity };
+  try {
+    const cpu = await run(new CpuBackend());
+    let after: Awaited<ReturnType<typeof run>>;
+    if (kind === 'webgpu') {
+      const be = new WebGpuBackend();
+      await run(be);
+      const dev = (be as unknown as { device: GPUDevice }).device;
+      dev.destroy();
+      await dev.lost;
+      after = await run(be);
+      be.destroy();
+    } else {
+      const canvas = document.getElementById('field') as HTMLCanvasElement;
+      const be = new WebGL2Backend(canvas);
+      await run(be);
+      const ext = canvas.getContext('webgl2')!.getExtension('WEBGL_lose_context')!;
+      const lost = once(canvas, 'webglcontextlost');
+      ext.loseContext();
+      await lost;
+      res.lostForceFinite = (await be.readForce()).finite;
+      try {
+        await run(be); // never restored: init() gives up after its bounded wait
+      } catch (e) {
+        res.lostInitError = String(e);
+      }
+      const again = run(be); // waits for the restoration
+      const restored = once(canvas, 'webglcontextrestored');
+      ext.restoreContext();
+      await restored;
+      after = await again;
+      be.destroy();
+    }
+    let maxAbsDiffU = 0;
+    for (let c = 0; c < cpu.macro.ux.length; c++) {
+      const d = Math.max(Math.abs(cpu.macro.ux[c] - after.macro.ux[c]), Math.abs(cpu.macro.uy[c] - after.macro.uy[c]));
+      if (!(d <= maxAbsDiffU)) maxAbsDiffU = Number.isNaN(d) ? Infinity : d;
+    }
+    const fa = cpu.force, fb = after.force;
+    res.maxAbsDiffU = maxAbsDiffU;
+    res.forceRelDiff = fb.finite ? Math.hypot(fa.fx - fb.fx, fa.fy - fb.fy) / Math.hypot(fa.fx, fa.fy) : Infinity;
+  } catch (e) {
+    res.error = String(e);
+  }
+  window.recoverResult = res;
+  out.textContent = JSON.stringify(res, null, 2);
+}
+
 async function main(): Promise<void> {
   const kind = new URLSearchParams(location.search).get('backend') ?? 'webgpu';
   const out = document.getElementById('out')!;
   if (new URLSearchParams(location.search).get('render') === '1') return runRender(kind);
+  if (new URLSearchParams(location.search).get('recover') === '1') return runRecover(kind);
   try {
     const t0 = performance.now();
     const cpu = new CpuBackend();
