@@ -11,6 +11,7 @@ import { NU_AIR, PRESETS } from '../src/config';
 import { toLattice } from '../src/physics/units';
 import { rasterize, objectCenter } from '../src/geometry/rasterize';
 import { makeShape } from '../src/geometry/shapes';
+import { fieldScale } from '../src/ui/colormaps';
 
 interface ParityResult {
   backend: string;
@@ -56,9 +57,74 @@ async function run(be: SimBackend) {
   return { force, macro };
 }
 
+interface RenderResult {
+  backend: string;
+  redPct: number;
+  bluePct: number;
+  centreRGB: number[];
+  error?: string;
+}
+
+declare global {
+  interface Window {
+    renderResult?: RenderResult;
+  }
+}
+
+/** &render=1: default cylinder (Re 100, Baixa), 2000 steps, vorticity drawn to the visible #field canvas. */
+async function runRender(kind: string): Promise<void> {
+  const out = document.getElementById('out')!;
+  const canvas = document.getElementById('field') as HTMLCanvasElement;
+  canvas.hidden = false;
+  try {
+    const L = 0.01, U = 0.15;
+    const lat = toLattice({ U, L, alphaDeg: 0, kind: 'cylinder' }, PRESET);
+    const { cx, cy } = objectCenter('cylinder', PRESET);
+    const { W, H } = PRESETS[PRESET];
+    const geom = rasterize(makeShape('cylinder', lat.Lcells, 0), W, H, cx, cy);
+    const be: SimBackend = kind === 'webgl2' ? new WebGL2Backend(canvas) : await makeGpu(kind);
+    await be.init(geom, lat.tau0, lat.uLb);
+    be.initUniform(lat.uLb, 0);
+    be.addKick(cx + 0.5 * lat.Lcells, cy, cx + 2.5 * lat.Lcells, cy + lat.Lcells, 0.1 * lat.uLb);
+    be.step(2000);
+    be.render('vorticity', canvas, fieldScale('vorticity', lat.uLb, lat.Lcells));
+    // same task as render(): copy through a 2D canvas to read the pixels back
+    const copy = document.createElement('canvas');
+    copy.width = W;
+    copy.height = H;
+    const ctx = copy.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(canvas, 0, 0);
+    const px = ctx.getImageData(0, 0, W, H).data;
+    // near-wake region: x in [cx + L, cx + 10L), y within +-2L of the axis (image row = H - 1 - y)
+    const x0 = Math.floor(cx + lat.Lcells), x1 = Math.floor(cx + 10 * lat.Lcells);
+    const y0 = Math.floor(cy - 2 * lat.Lcells), y1 = Math.floor(cy + 2 * lat.Lcells);
+    let n = 0, red = 0, blue = 0;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const o = 4 * ((H - 1 - y) * W + x);
+        const r = px[o], g = px[o + 1], b = px[o + 2];
+        n++;
+        if (r > b + 40 && r > g + 20) red++;
+        if (b > r + 40 && b > g + 20) blue++;
+      }
+    }
+    const co = 4 * ((H - 1 - Math.round(cy)) * W + Math.round(cx));
+    window.renderResult = {
+      backend: kind,
+      redPct: (100 * red) / n,
+      bluePct: (100 * blue) / n,
+      centreRGB: [px[co], px[co + 1], px[co + 2]],
+    };
+  } catch (e) {
+    window.renderResult = { backend: kind, redPct: 0, bluePct: 0, centreRGB: [], error: String(e) };
+  }
+  out.textContent = JSON.stringify(window.renderResult);
+}
+
 async function main(): Promise<void> {
   const kind = new URLSearchParams(location.search).get('backend') ?? 'webgpu';
   const out = document.getElementById('out')!;
+  if (new URLSearchParams(location.search).get('render') === '1') return runRender(kind);
   try {
     const t0 = performance.now();
     const cpu = new CpuBackend();

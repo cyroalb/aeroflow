@@ -13,6 +13,11 @@ export interface SimBackend {
   step(n: number): void;                       // n steps; force computed on the last one
   readForce(): Promise<{ fx: number; fy: number; finite: boolean }>;
   readMacro(): Promise<{ rho: Float32Array; ux: Float32Array; uy: Float32Array }>; // tests/parity only
-  render(field: 'vorticity' | 'speed' | 'pressure', canvas: HTMLCanvasElement): void; // Task 9
+  /**
+   * Draws the field to `canvas` (internal size is set to the grid size W×H; CSS scaling is the UI's job).
+   * `range` is the colour range from fieldScale(field, uLb, Lcells); pressure is in (rho-1)/3 units
+   * (see src/ui/colormaps.ts). Solid cells are #9aa4b2; row 0 (y = 0) is the bottom of the image.
+   */
+  render(field: 'vorticity' | 'speed' | 'pressure', canvas: HTMLCanvasElement, range: [number, number]): void;
   destroy(): void;
 }

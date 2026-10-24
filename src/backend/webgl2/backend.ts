@@ -2,6 +2,8 @@ import vertSrc from './quad.vert.glsl?raw';
 import lbmSrc from './lbm.frag.glsl?raw';
 import outletSrc from './outlet.frag.glsl?raw';
 import forceSrc from './force.frag.glsl?raw';
+import renderSrc from './render.frag.glsl?raw';
+import { colormapFor, colormapRGBA8, type FieldName } from '../../ui/colormaps';
 import { CS_SMAG } from '../../config';
 import type { Geometry, SimBackend } from '../types';
 
@@ -12,12 +14,12 @@ const UNITS = {
   uF0: 0, uF1: 1, uF2: 2,
   uS0: 3, uS1: 4, uS2: 5,
   uQ0: 6, uQ1: 7, uQ2: 8,
-  uSolid: 9, uMac: 10, uChanged: 11, uLinks: 12,
+  uSolid: 9, uMac: 10, uChanged: 11, uLinks: 12, uCmap: 13,
 } as const;
 type Unit = keyof typeof UNITS;
-const N_UNITS = 13;
+const N_UNITS = 14;
 
-type Prog = 'collide' | 'stream' | 'macro' | 'util' | 'outlet' | 'force';
+type Prog = 'collide' | 'stream' | 'macro' | 'util' | 'outlet' | 'force' | 'render';
 
 interface Program {
   prog: WebGLProgram;
@@ -53,6 +55,8 @@ export class WebGL2Backend implements SimBackend {
   private gl: WebGL2RenderingContext | null = null;
   private progs: Record<Prog, Program> | null = null;
   private vao: WebGLVertexArrayObject | null = null;
+  private glCanvas: HTMLCanvasElement | OffscreenCanvas | null = null;
+  private cmaps = new Map<FieldName, WebGLTexture>();
   private res: Resources | null = null;
   private geom: Geometry | null = null;
   private cur = 0; // current f set
@@ -77,7 +81,9 @@ export class WebGL2Backend implements SimBackend {
     this.gl = null;
     this.progs = null;
     this.res = null;
+    this.cmaps.clear();
     const canvas = this.canvas ?? document.createElement('canvas');
+    this.glCanvas = canvas;
     const gl = canvas.getContext('webgl2', {
       antialias: false,
       depth: false,
@@ -98,6 +104,7 @@ export class WebGL2Backend implements SimBackend {
       util: this.link(vs, lbm(4)),
       outlet: this.link(vs, outletSrc),
       force: this.link(vs, forceSrc),
+      render: this.link(vs, renderSrc),
     };
     this.vao = gl.createVertexArray();
     gl.disable(gl.BLEND);
@@ -193,6 +200,8 @@ export class WebGL2Backend implements SimBackend {
     if (!gl || !r || gl.isContextLost()) return;
     const texs = [...r.f[0], ...r.f[1], ...r.fs, ...r.mac, ...r.q, r.solid, r.changed, r.links, r.force];
     for (const t of texs) gl.deleteTexture(t);
+    for (const t of this.cmaps.values()) gl.deleteTexture(t);
+    this.cmaps.clear();
     for (const fb of [...r.fbF, r.fbFs, ...r.fbMac, ...r.fbUtil, r.fbForce]) gl.deleteFramebuffer(fb);
   }
 
@@ -309,7 +318,7 @@ export class WebGL2Backend implements SimBackend {
 
   private draw(
     name: Prog,
-    fb: WebGLFramebuffer,
+    fb: WebGLFramebuffer | null,
     tex: Partial<Record<Unit, WebGLTexture>>,
     set?: (p: Program) => void,
     vw = this.geom!.W,
@@ -459,8 +468,44 @@ export class WebGL2Backend implements SimBackend {
     return { rho, ux, uy };
   }
 
-  render(_field: 'vorticity' | 'speed' | 'pressure', _canvas: HTMLCanvasElement): void {
-    // Task 9
+  private cmapTexture(field: FieldName): WebGLTexture {
+    let t = this.cmaps.get(field);
+    if (!t) {
+      t = this.tex(this.gl!.RGBA8, this.gl!.RGBA, this.gl!.UNSIGNED_BYTE, 256, 1, colormapRGBA8(colormapFor(field)));
+      this.cmaps.set(field, t);
+    }
+    return t;
+  }
+
+  /**
+   * A GL context can only draw to its own canvas (the one passed to the constructor, or an internal
+   * one). The field is always drawn there at grid size W×H; if `canvas` is a different element, the
+   * result is then copied into it with a 2D drawImage in the same task (the drawing buffer is still
+   * intact, there is no preserveDrawingBuffer).
+   */
+  render(field: FieldName, canvas: HTMLCanvasElement, range: [number, number]): void {
+    this.require();
+    if (!this.ready) return;
+    const gl = this.gl!, r = this.res!, g = this.geom!;
+    const own = this.glCanvas!;
+    if (own.width !== g.W) own.width = g.W;
+    if (own.height !== g.H) own.height = g.H;
+    this.draw(
+      'render',
+      null,
+      { uMac: r.mac[this.curMac], uSolid: r.solid, uCmap: this.cmapTexture(field) },
+      (p) => {
+        gl.uniform2f(this.uni(p, 'uRange'), range[0], range[1]);
+        gl.uniform1i(this.uni(p, 'uField'), field === 'vorticity' ? 0 : field === 'speed' ? 1 : 2);
+      },
+    );
+    if (canvas !== (own as unknown)) {
+      canvas.width = g.W;
+      canvas.height = g.H;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('WebGL2Backend.render: 2d context unavailable on target canvas');
+      ctx.drawImage(own as CanvasImageSource, 0, 0);
+    }
   }
 
   destroy(): void {

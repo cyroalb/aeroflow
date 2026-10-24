@@ -1,4 +1,6 @@
 import shaderSrc from './lbm.wgsl?raw';
+import renderSrc from './render.wgsl?raw';
+import { colormapFor, colormapRGBAF32, type FieldName } from '../../ui/colormaps';
 import { CS_SMAG } from '../../config';
 import type { Geometry, SimBackend } from '../types';
 
@@ -33,6 +35,14 @@ export class WebGpuBackend implements SimBackend {
   private uInX = 0;
   private uInY = 0;
   private readonly paramsData = new ArrayBuffer(PARAMS_BYTES);
+  // render resources (separate pipeline/layout: the sim layout's storage-buffer budget is full)
+  private rPipeline: GPURenderPipeline | null = null;
+  private rLayout: GPUBindGroupLayout | null = null;
+  private rParams: GPUBuffer | null = null;
+  private rCmaps = new Map<FieldName, GPUBuffer>();
+  private rCtx: GPUCanvasContext | null = null;
+  private rCanvas: HTMLCanvasElement | null = null;
+  private rFormat: GPUTextureFormat | null = null;
 
   /** Requests the adapter/device and compiles the pipelines (called by init if needed). */
   private async ensureDevice(): Promise<GPUDevice> {
@@ -274,12 +284,92 @@ export class WebGpuBackend implements SimBackend {
     return { rho: m.slice(0, N), ux: m.slice(N, 2 * N), uy: m.slice(2 * N, 3 * N) };
   }
 
-  render(_field: 'vorticity' | 'speed' | 'pressure', _canvas: HTMLCanvasElement): void {
-    // Task 9 (render.wgsl)
+  private ensureRender(canvas: HTMLCanvasElement): void {
+    const d = this.dev;
+    if (!this.rPipeline) {
+      this.rFormat = navigator.gpu.getPreferredCanvasFormat();
+      const module = d.createShaderModule({ code: renderSrc });
+      const ro = (binding: number): GPUBindGroupLayoutEntry => ({
+        binding,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: { type: 'read-only-storage' },
+      });
+      this.rLayout = d.createBindGroupLayout({
+        entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, ro(1), ro(2), ro(3)],
+      });
+      this.rPipeline = d.createRenderPipeline({
+        layout: d.createPipelineLayout({ bindGroupLayouts: [this.rLayout] }),
+        vertex: { module, entryPoint: 'vs' },
+        fragment: { module, entryPoint: 'fs', targets: [{ format: this.rFormat }] },
+        primitive: { topology: 'triangle-list' },
+      });
+      this.rParams = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    }
+    if (this.rCanvas !== canvas) {
+      // configured with this backend's device the first time render is called for a given canvas
+      const ctx = canvas.getContext('webgpu') as GPUCanvasContext | null;
+      if (!ctx) throw new Error('WebGpuBackend.render: getContext("webgpu") returned null');
+      ctx.configure({ device: d, format: this.rFormat!, alphaMode: 'opaque' });
+      this.rCtx = ctx;
+      this.rCanvas = canvas;
+    }
+  }
+
+  render(field: FieldName, canvas: HTMLCanvasElement, range: [number, number]): void {
+    const d = this.dev, g = this.geom!;
+    if (canvas.width !== g.W) canvas.width = g.W;
+    if (canvas.height !== g.H) canvas.height = g.H;
+    this.ensureRender(canvas);
+    let cm = this.rCmaps.get(field);
+    if (!cm) {
+      const data = colormapRGBAF32(colormapFor(field));
+      cm = d.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      d.queue.writeBuffer(cm, 0, data);
+      this.rCmaps.set(field, cm);
+    }
+    const pd = new ArrayBuffer(32);
+    const u = new Uint32Array(pd), fl = new Float32Array(pd);
+    u[0] = g.W;
+    u[1] = g.H;
+    u[2] = field === 'vorticity' ? 0 : field === 'speed' ? 1 : 2;
+    fl[4] = range[0];
+    fl[5] = range[1];
+    d.queue.writeBuffer(this.rParams!, 0, pd);
+    const bg = d.createBindGroup({
+      layout: this.rLayout!,
+      entries: [this.rParams!, this.buf!.mac, this.buf!.solid, cm].map((buffer, binding) => ({
+        binding,
+        resource: { buffer },
+      })),
+    });
+    const enc = d.createCommandEncoder();
+    const pass = enc.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.rCtx!.getCurrentTexture().createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+    pass.setPipeline(this.rPipeline!);
+    pass.setBindGroup(0, bg);
+    pass.draw(3);
+    pass.end();
+    d.queue.submit([enc.finish()]);
   }
 
   destroy(): void {
     this.freeBuffers();
+    for (const b of this.rCmaps.values()) b.destroy();
+    this.rCmaps.clear();
+    this.rParams?.destroy();
+    this.rParams = null;
+    this.rPipeline = null;
+    this.rLayout = null;
+    this.rCtx = null;
+    this.rCanvas = null;
     this.device?.destroy();
     this.device = null;
     this.pipelines = null;

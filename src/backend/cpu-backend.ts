@@ -1,5 +1,6 @@
 import { LbmCpu } from '../physics/lbm-cpu';
 import type { Geometry, SimBackend } from './types';
+import { colormapFor, colorIndex, SOLID_RGB, type FieldName } from '../ui/colormaps';
 
 /** SimBackend over the CPU reference solver (tests and parity reference). */
 export class CpuBackend implements SimBackend {
@@ -50,8 +51,43 @@ export class CpuBackend implements SimBackend {
     return { rho: s.rho.slice(), ux: s.ux.slice(), uy: s.uy.slice() };
   }
 
-  render(_field: 'vorticity' | 'speed' | 'pressure', _canvas: HTMLCanvasElement): void {
-    // Task 9: draw to a 2D canvas using colormaps.ts
+  /** Draws with a 2D context and ImageData (tests/dev only). */
+  render(field: FieldName, canvas: HTMLCanvasElement, range: [number, number]): void {
+    const s = this.s;
+    const { W, H } = s;
+    const solid = s.geom.solid;
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('CpuBackend.render: 2d context unavailable');
+    const cmap = colormapFor(field);
+    const img = ctx.createImageData(W, H);
+    const ux = (x: number, y: number) => (solid[y * W + x] ? 0 : s.ux[y * W + x]);
+    const uy = (x: number, y: number) => (solid[y * W + x] ? 0 : s.uy[y * W + x]);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const c = y * W + x;
+        let rgb: readonly number[];
+        if (solid[c]) rgb = SOLID_RGB;
+        else {
+          let v: number;
+          if (field === 'pressure') v = (s.rho[c] - 1) / 3;
+          else if (field === 'speed') v = Math.hypot(s.ux[c], s.uy[c]);
+          else {
+            const xl = Math.max(x - 1, 0), xr = Math.min(x + 1, W - 1);
+            const yl = Math.max(y - 1, 0), yr = Math.min(y + 1, H - 1);
+            v = (uy(xr, y) - uy(xl, y)) / (xr - xl) - (ux(x, yr) - ux(x, yl)) / (yr - yl);
+          }
+          rgb = cmap[colorIndex(v, range)];
+        }
+        const o = 4 * ((H - 1 - y) * W + x);
+        img.data[o] = rgb[0];
+        img.data[o + 1] = rgb[1];
+        img.data[o + 2] = rgb[2];
+        img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
   }
 
   destroy(): void {
