@@ -5,6 +5,7 @@
  */
 import { CpuBackend } from '../src/backend/cpu-backend';
 import { WebGpuBackend } from '../src/backend/webgpu/backend';
+import { WebGL2Backend } from '../src/backend/webgl2/backend';
 import type { SimBackend } from '../src/backend/types';
 import { NU_AIR, PRESETS } from '../src/config';
 import { toLattice } from '../src/physics/units';
@@ -32,6 +33,7 @@ const STEPS = 100;
 
 async function makeGpu(kind: string): Promise<SimBackend> {
   if (kind === 'webgpu') return new WebGpuBackend();
+  if (kind === 'webgl2') return new WebGL2Backend();
   throw new Error(`backend não suportado na página de paridade: ${kind}`);
 }
 
